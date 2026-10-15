@@ -255,6 +255,8 @@ def main():
                 minutes = 330
         end = time.time() + minutes * 60
         while True:
+            if os.environ.get("GITHUB_ACTIONS"):                    # کد جدید push شده باشه، همین الان استفاده بشه
+                os.system("git pull -q --ff-only >/dev/null 2>&1")
             try:
                 r = cloud("collect")
                 log(f"checked={r.get('checked')} added={r.get('added')} low={r.get('low', 0)} "
