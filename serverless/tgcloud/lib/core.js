@@ -16,6 +16,9 @@ export const FACT_FEEDS = [
   { name: "Reddit r/anime", url: "https://www.reddit.com/r/anime/top/.rss?t=day", type: "fact", unverified: true },
   { name: "Reddit r/manga", url: "https://www.reddit.com/r/manga/top/.rss?t=week", type: "fact", unverified: true },
   { name: "The Canipa Effect", url: "https://www.youtube.com/feeds/videos.xml?channel_id=UCz4ZjuO7HrynjRrRlur1yWg", type: "fact" },
+  { name: "SPY_true", url: "x:SPY_true", type: "fact" },
+  { name: "AIR_News_EN", url: "x:AIR_News_EN", type: "fact" },
+  { name: "WSJ_manga", url: "x:WSJ_manga", type: "fact" },
 ];
 
 export function decodeEntities(s) {
