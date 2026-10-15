@@ -71,6 +71,7 @@ export default async function (input) {
   if (input.op === 'poll') return { jobs: await agentPoll(p), updates: await agentUpdates(p) };
   if (input.op === 'done') return await agentDone(p, input.result || {});
   if (input.op === 'collect') return await collect(p, input.prefetched || null);
+  if (input.op === 'dbg') { const out = {}; for (const pre of ['news:', 'job:', 'cfg:', 'feedstate:']) { try { const r = await p.kv.list(pre); out[pre] = r.length + ' rows, ' + JSON.stringify(r).length + ' bytes'; } catch (e) { out[pre] = 'ERR ' + e.message; } } return out; }
   if (input.op === 'parse') { const a = parseArticle(input.html || ''); return { images: a.images, videos: a.videos, image: a.image }; }
   if (input.op === 'redo') return await redoNews(p, input.words || []);
   if (input.op === 'clearjobs') return await clearImageJobs(p);
@@ -427,6 +428,9 @@ def relay(updates):
 def main():
     if not TG_CLOUD or ":" not in TG_CLOUD:
         sys.exit("TGCLOUD_TOKEN رو توی .env بذار (BotFather → Serverless → CLI Access → Access token).")
+    if "--dbg" in sys.argv:
+        log(json.dumps(cloud("dbg"), ensure_ascii=False))
+        return
     if "--probe" in sys.argv:                                    # عیب‌یابی: یه صفحه‌ی خبر چه ویدیو/عکسی داره
         url = sys.argv[sys.argv.index("--probe") + 1]
         html = urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": BROWSER_UA}), timeout=40).read().decode("utf-8", "ignore")

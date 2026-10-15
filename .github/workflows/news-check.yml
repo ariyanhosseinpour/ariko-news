@@ -38,4 +38,4 @@ jobs:
         env:
           TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_TOKEN }}
           X_AUTH_TOKEN: ${{ secrets.X_AUTH_TOKEN }}
-        run: python serverless_agent.py ${{ inputs.probe != '' && format('--probe "{0}"', inputs.probe) || '' }} ${{ inputs.redo != '' && format('--redo "{0}"', inputs.redo) || '' }} ${{ inputs.clear_jobs && '--clear-jobs' || '' }} ${{ inputs.recover && '--recover' || (inputs.diagnose && '--diagnose' || '--tick') }} ${{ inputs.force && '--force' || '' }}
+        run: python serverless_agent.py ${{ inputs.probe == 'dbg' && '--dbg' || '' }} ${{ inputs.probe != '' && inputs.probe != 'dbg' && format('--probe "{0}"', inputs.probe) || '' }} ${{ inputs.redo != '' && format('--redo "{0}"', inputs.redo) || '' }} ${{ inputs.clear_jobs && '--clear-jobs' || '' }} ${{ inputs.recover && '--recover' || (inputs.diagnose && '--diagnose' || '--tick') }} ${{ inputs.force && '--force' || '' }}
