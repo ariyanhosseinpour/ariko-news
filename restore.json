@@ -1,0 +1,15 @@
+{
+  "channel": "-1004350913616",
+  "min_importance": 40,
+  "feeds": [
+    {"name": "Anime News Network", "url": "https://www.animenewsnetwork.com/news/rss.xml?ann-edition=us"},
+    {"name": "MyAnimeList News", "url": "https://myanimelist.net/rss/news.xml"},
+    {"name": "Crunchyroll News", "url": "https://cr-news-api-service.prd.crunchyrollsvc.com/v1/en-US/rss"},
+    {"name": "Anime Corner", "url": "https://animecorner.me/feed/"},
+    {"name": "animetv-jp", "url": "https://animetv-jp.net/feed/"},
+    {"name": "SugoiLITE", "url": "x:SugoiLITE"},
+    {"name": "SugoiBingus", "url": "x:SugoiBingus"},
+    {"name": "d0nut2x", "url": "x:d0nut2x"},
+    {"name": "MangaMoguraRE", "url": "x:MangaMoguraRE"}
+  ]
+}
