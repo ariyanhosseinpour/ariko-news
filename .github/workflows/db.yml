@@ -1,0 +1,34 @@
+name: db
+# وضعیت پایگاه‌داده‌ی Telegram Serverless (عیب‌یابی)
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "تغییرات امن schema اعمال بشه؟"
+        type: boolean
+        default: false
+jobs:
+  db:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: serverless
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: status
+        env:
+          TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_TOKEN }}
+          TGCLOUD_NO_PAGER: "1"
+        run: |
+          mkdir -p .tgcloud
+          npx -y @tgcloud/cli@0.2.0 status || true
+          npx -y @tgcloud/cli@0.2.0 migrate --dry-run || true
+      - name: apply safe migration
+        if: ${{ inputs.apply }}
+        env:
+          TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_TOKEN }}
+        run: npx -y @tgcloud/cli@0.2.0 migrate --safe
