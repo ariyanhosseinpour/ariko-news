@@ -246,10 +246,26 @@ def relay(updates):
 def main():
     if not TG_CLOUD or ":" not in TG_CLOUD:
         sys.exit("TGCLOUD_TOKEN رو توی .env بذار (BotFather → Serverless → CLI Access → Access token).")
-    if "--tick" in sys.argv:                                     # کران هاست: فقط یه بار چک خبرها
-        r = cloud("collect")
-        log(f"checked={r.get('checked')} added={r.get('added')} errors={len(r.get('errors') or [])}")
-        return
+    if "--tick" in sys.argv or "--loop" in sys.argv:              # گیت‌هاب: چک خبرها (یه بار، یا هر ۵ دقیقه تا --minutes)
+        minutes = 0
+        if "--loop" in sys.argv:
+            try:
+                minutes = int(sys.argv[sys.argv.index("--loop") + 1])
+            except (IndexError, ValueError):
+                minutes = 330
+        end = time.time() + minutes * 60
+        while True:
+            try:
+                r = cloud("collect")
+                log(f"checked={r.get('checked')} added={r.get('added')} low={r.get('low', 0)} "
+                    f"errors={len(r.get('errors') or [])}")
+                for e in r.get("errors") or []:
+                    log(f"   ⚠️ {e}")
+            except Exception as exc:
+                log(f"⚠️ {exc}")
+            if time.time() + 300 > end:
+                return
+            time.sleep(300)
     if not TOKEN:
         sys.exit("NEWS_BOT_TOKEN رو توی .env بذار.")
     log("✅ برنامه‌ی کامپیوتر بات خبری روشنه (Ctrl+C برای بستن)")

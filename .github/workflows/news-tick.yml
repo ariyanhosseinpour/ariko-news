@@ -1,21 +1,35 @@
 name: news-tick
+# کران گیت‌هاب قابل اعتماد نیست (گاهی ساعت‌ها اجرا نمیشه)؛ برای همین هر اجرا ~۵٫۵ ساعت روشن می‌مونه و
+# هر ۵ دقیقه خبرها رو چک می‌کنه، آخرش هم خودش اجرای بعدی رو شروع می‌کنه. کران فقط پشتیبانه.
 on:
   schedule:
-    - cron: "*/5 * * * *"
+    - cron: "17 */2 * * *"
   workflow_dispatch:
+    inputs:
+      minutes:
+        description: "چند دقیقه روشن بمونه (0 = فقط یه بار چک)"
+        default: "330"
 concurrency:
   group: news-tick
   cancel-in-progress: false
+permissions:
+  contents: read
+  actions: write
 jobs:
   tick:
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+    timeout-minutes: 350
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: collect news
+      - name: collect news every 5 minutes
         env:
           TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_TOKEN }}
-        run: python serverless_agent.py --tick
+        run: python serverless_agent.py --loop ${{ inputs.minutes || '330' }}
+      - name: start the next run
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run news-tick.yml --ref main
