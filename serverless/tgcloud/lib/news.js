@@ -7,7 +7,7 @@ import { DEFAULT_FEEDS, parseFeed, parseArticle, hashKey, SYSTEM_PROMPT, buildPr
 export const OWNER_ID = 513902877;
 const MAX_NEW_PER_RUN = 3;                                  // هر بار چک (هر ۵ دقیقه) حداکثر ۳ خبر جدید؛ سبک بمونه
 const DEFAULT_MODELS = ["gemini-3.5-flash-lite", "gemini-3.5-flash", "gemini-flash-lite-latest"];
-const DEFAULT_FOOTER = "آریکو تی وی | @Ariko_Tv";
+export const DEFAULT_FOOTER = "آریکو تی وی | @Ariko_Tv";
 
 // ───────── تنظیمات ─────────
 export async function cfg(p, key, def = null) {
@@ -223,6 +223,24 @@ export async function reject(p, id) {
   await p.kv.set("news:" + id, news);
   await p.kv.del("job:j" + id);
   return "❌ رد شد";
+}
+
+// ───────── صف بررسی: خبرهایی که هنوز تأیید/رد نشدن ─────────
+export async function pendingNews(p) {
+  const rows = (await p.kv.list("news:")).map((r) => r.value)
+    .filter((n) => n && (n.status === "pending" || n.status === "needs_image"));
+  return rows.sort((a, b) => (b.created || 0) - (a.created || 0));
+}
+
+export async function resendPreview(p, chatId, news) {
+  const photo = news.file_id || news.image;
+  if (!photo || news.status === "needs_image") {
+    return p.api("sendMessage", { chat_id: chatId, parse_mode: "HTML",
+      text: `🖥 «${escapeHtml(news.title)}»\nعکس لازم داره؛ سیستم رو روشن کن.`,
+      reply_markup: { inline_keyboard: [[{ text: "❌ رد", callback_data: `nw:no:${news.id}` }]] } });
+  }
+  return sendPhotoSmart(p, { chat_id: chatId, photo, caption: previewText(p, news).slice(0, 1024),
+                             parse_mode: "HTML", reply_markup: reviewKeyboard(news.id) }, news);
 }
 
 // ───────── برای برنامه‌ی کامپیوتر (از طریق «tgcloud run»؛ serverless_agent.py) ─────────

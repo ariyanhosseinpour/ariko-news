@@ -1,18 +1,79 @@
-// دکمه‌های «✅ انتشار / ❌ رد» زیر پیش‌نمایش خبر.
+// دکمه‌های شیشه‌ای: «✅ انتشار / ❌ رد» زیر خبر، و دکمه‌های منو (منبع‌ها، هوش مصنوعی، ادمین‌ها، …).
 import { platform } from "../lib/platform.js";
-import { isAdmin, publish, reject } from "../lib/news.js";
+import { isAdmin, publish, reject, feeds, setCfg, cfg, admins } from "../lib/news.js";
+import { escapeHtml, hashKey } from "../lib/core.js";
+import { feedsView, aiView, adminsView, setWait, cancelKeyboard, WAIT_PROMPT } from "../lib/menu.js";
 
 export default async function (q, ctx) {
   const p = platform();
-  const [kind, action, id] = String(q.data || "").split(":");
-  if (kind !== "nw") return;
-  if (!(await isAdmin(p, q.from.id))) {
-    return p.api("answerCallbackQuery", { callback_query_id: q.id, text: "دسترسی ندارید.", show_alert: true });
+  const [kind, action, ...restParts] = String(q.data || "").split(":");
+  const id = restParts.join(":");
+  const answer = (text = "", alert = false) =>
+    p.api("answerCallbackQuery", { callback_query_id: q.id, text, show_alert: alert }).catch(() => {});
+  if (!(await isAdmin(p, q.from.id))) return answer("دسترسی ندارید.", true);
+  const chat = q.message && q.message.chat.id;
+  const mid = q.message && q.message.message_id;
+  const edit = (v) => p.api("editMessageText", { chat_id: chat, message_id: mid, text: v.text, parse_mode: "HTML",
+                                                 disable_web_page_preview: true, reply_markup: v.reply_markup }).catch(() => {});
+  const ask = async (waitKind) => {
+    await setWait(p, q.from.id, waitKind);
+    await answer();
+    return p.api("sendMessage", { chat_id: chat, text: WAIT_PROMPT[waitKind], parse_mode: "HTML",
+                                  reply_markup: cancelKeyboard() });
+  };
+
+  switch (kind) {
+    case "nw": {                                             // انتشار / رد خبر
+      if (action === "x") return answer();
+      const result = action === "ok" ? await publish(p, id) : await reject(p, id);
+      await answer(result);
+      try {                                                   // دکمه‌ها برداشته میشن که دوبار زده نشه
+        await p.api("editMessageReplyMarkup", { chat_id: chat, message_id: mid,
+          reply_markup: { inline_keyboard: [[{ text: result, callback_data: "nw:x:0" }]] } });
+      } catch (e) { /* */ }
+      return;
+    }
+    case "fd": {                                             // منبع‌ها
+      if (action === "add") return ask("feed");
+      if (action === "back") { await answer(); return edit(await feedsView(p)); }
+      const list = await feeds(p);
+      const f = list.find((x) => hashKey(x.url) === id);
+      if (!f) { await answer("این منبع دیگه نیست."); return edit(await feedsView(p)); }
+      if (action === "ask") {
+        await answer();
+        return edit({ text: `🗑 منبع «<b>${escapeHtml(f.name)}</b>» حذف بشه؟\n${escapeHtml(f.url)}`,
+                      reply_markup: { inline_keyboard: [[{ text: "✅ آره، حذف کن", callback_data: `fd:del:${id}` },
+                                                         { text: "↩️ نه", callback_data: "fd:back:0" }]] } });
+      }
+      if (action === "del") {
+        await setCfg(p, "feeds", list.filter((x) => x !== f));
+        await answer("🗑 حذف شد");
+        return edit(await feedsView(p));
+      }
+      return answer();
+    }
+    case "ai": {                                             // هوش مصنوعی
+      if (action === "key") return ask("key");
+      if (action === "m") {
+        await setCfg(p, "model", id);
+        await answer(`✅ مدل: ${id || "پیش‌فرض"}`);
+        return edit(await aiView(p));
+      }
+      return answer();
+    }
+    case "ad": {                                             // ادمین‌ها (فقط صاحب بات)
+      if (Number(q.from.id) !== (await admins(p))[0]) return answer("فقط صاحب بات.", true);
+      if (action === "add") return ask("admin");
+      if (action === "del") {
+        const list = ((await cfg(p, "admins", [])) || []).filter((x) => String(x) !== id);
+        await setCfg(p, "admins", list);
+        await answer("🗑 حذف شد");
+        return edit(await adminsView(p));
+      }
+      return answer();
+    }
+    case "ch": return action === "set" ? ask("channel") : answer();
+    case "ft": return action === "set" ? ask("footer") : answer();
   }
-  const result = action === "ok" ? await publish(p, id) : await reject(p, id);
-  await p.api("answerCallbackQuery", { callback_query_id: q.id, text: result });
-  try {                                                     // دکمه‌ها برداشته میشن که دوبار زده نشه
-    await p.api("editMessageReplyMarkup", { chat_id: q.message.chat.id, message_id: q.message.message_id,
-                                            reply_markup: { inline_keyboard: [[{ text: result, callback_data: "nw:x:0" }]] } });
-  } catch (e) { /* */ }
+  return answer();
 }
