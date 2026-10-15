@@ -23,4 +23,5 @@ jobs:
           TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_TOKEN }}
         run: |
           mkdir -p .tgcloud
-          npx -y @tgcloud/cli@0.2.0 push --force
+          # فقط کد (handlers/lib)؛ schema و دیتابیس دست نمی‌خوره
+          npx -y @tgcloud/cli@0.2.0 push tgcloud/handlers tgcloud/lib --force

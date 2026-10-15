@@ -73,6 +73,11 @@ export default async function (input) {
   if (input.op === 'poll') return { jobs: await agentPoll(p), updates: await agentUpdates(p) };
   if (input.op === 'done') return await agentDone(p, input.result || {});
   if (input.op === 'collect') return await collect(p, input.prefetched || null);
+  if (input.op === 'restore') {
+    const c = input.cfg || {};
+    for (const [k, v] of Object.entries(c)) await p.kv.set('cfg:' + k, v);
+    return { restored: Object.keys(c) };
+  }
   if (input.op === 'dbg2') {
     const kv = kvTable;
     const out = {}; const t = async (name, f) => { try { const r = await f(); out[name] = JSON.stringify(r).slice(0, 200); } catch (e) { out[name] = 'ERR ' + e.message; } };
@@ -442,6 +447,10 @@ def relay(updates):
 def main():
     if not TG_CLOUD or ":" not in TG_CLOUD:
         sys.exit("TGCLOUD_TOKEN رو توی .env بذار (BotFather → Serverless → CLI Access → Access token).")
+    if "--restore" in sys.argv:                                  # تنظیمات بات از فایل restore.json
+        with open(os.path.join(BASE_DIR, "restore.json"), encoding="utf-8") as fh:
+            log(json.dumps(cloud("restore", cfg=json.load(fh)), ensure_ascii=False))
+        return
     if "--dbg" in sys.argv:
         log(json.dumps(cloud("dbg"), ensure_ascii=False))
         log(json.dumps(cloud("dbg2"), ensure_ascii=False))
