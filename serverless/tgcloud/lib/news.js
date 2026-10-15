@@ -270,7 +270,7 @@ export async function diagnose(p, pre = null) {
   }
   let gemini = "";
   try {
-    const sample = out.find((x) => x.pass) || out.find((x) => x.title);
+    const sample = out.filter((x) => x.title && !x.title.startsWith("@")).sort((a, b) => b.score - a.score)[0];
     const title = sample ? sample.title : "Test anime gets season 2";
     const r = await agentCaption(p, { title, summary: "", text: "", eventType: eventType(title, "") },
                                  await anilistMeta(p, guessAnimeName(title)));
