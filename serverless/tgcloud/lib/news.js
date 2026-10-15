@@ -118,9 +118,9 @@ export async function collect(p) {
       report.checked++;
       const seenKey = "seen:" + hashKey(it.link);
       if (await p.kv.get(seenKey)) continue;
+      if (!first && report.added >= MAX_NEW_PER_RUN) break;  // بقیه برای چک بعدی می‌مونن (گم نمی‌شن)
       await p.kv.set(seenKey, 1);
       if (first) continue;                                    // بار اول فقط علامت‌گذاری (سیل خبرهای قدیمی نیاد)
-      if (report.added >= MAX_NEW_PER_RUN) continue;
       try {
         await addNews(p, f, it);
         report.added++;
