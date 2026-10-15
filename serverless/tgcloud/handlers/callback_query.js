@@ -69,6 +69,10 @@ export default async function (q, ctx) {
       if (action === "del") {
         list.splice(i, 1);
         await setCfg(p, "feeds", list);
+        if (f.type === "fact") {                               // منبع فکت پیش‌فرض: یادش بمونه که دوباره اضافه نشه
+          const removed = (await cfg(p, "removed_feeds", [])) || [];
+          await setCfg(p, "removed_feeds", [...new Set([...removed, f.url])]);
+        }
         await answer("🗑 حذف شد");
         return edit({ text: `🗑 منبع «${escapeHtml(f.name)}» حذف شد.`, reply_markup: { inline_keyboard: [] } });
       }

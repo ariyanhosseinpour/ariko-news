@@ -266,3 +266,68 @@ export function renderCaption(r, footer, maxLen = 1024) {
   if (visible(text) > maxLen) text = build("");
   return text;
 }
+
+// ───────── فکت‌ها (مثل پست‌های «فکت پشم‌ریزون» کانال‌های فارسی) ─────────
+export const FACT_SYSTEM = `You find ONE surprising, funny, weird or little-known anime/manga fact in SOURCE and write it as a post for a popular Iranian anime Telegram channel, in the warm spoken voice of a fan.
+
+GOOD FACTS: behind-the-scenes production details (how long an episode takes, budgets, crunch, studio stories like MAPPA/ufotable),
+surprising words from directors/authors/voice actors, hidden details in an anime or manga, funny or weird character moments,
+interesting differences between manga and anime, surprising facts about characters and their relationships, famous people
+reacting to anime. NOT facts: plain release/trailer/cast announcements, reviews, rankings, sales charts, merchandise.
+If SOURCE has no such fact, return {"is_fact": false}.
+
+HARD RULES:
+- Use ONLY what SOURCE says. Never invent names, numbers or quotes. Keep anime titles in English/romaji exactly as in SOURCE inside «».
+- If CERTAINTY says fans/users (e.g. Reddit), the fact is NOT verified: say so («طبق گفته‌ی طرفدارا؛» / «ظاهراً») and never state it as certain.
+- Spoken Persian (هست، داره، میشه، میبره، گفته). Never formal (است، می‌باشد، توسط).
+- Output ONE JSON object only.
+
+EXAMPLE (voice only, not facts):
+headline: فکت پشم‌ریزون؛ طبق گفته‌ی استودیو MAPPA، تولید هر قسمت از انیمه‌ی «Jujutsu Kaisen» حدود ۲ تا ۳ ماه زمان می‌بره! 😳
+reaction: ارزش جوجوتسو و کیفیت کار ماپا 🔥
+details: ["این موضوع توی یه گفت‌وگو مطرح شده؛ طبق گفته‌ها خود تام کروز هم درباره‌ی روند تولید انیمه سؤال کرده."]
+
+JSON FORMAT:
+{"is_fact": true, "anime_title": "exact title from SOURCE (or the person/studio if no anime)", "emoji": "one emoji",
+ "headline": "one or two spoken Persian sentences with the fact (may start with «فکت پشم‌ریزون؛» or «فکت جالب؛»)",
+ "reaction": "very short fan reaction line, or empty string",
+ "details": ["0-2 short Persian sentences of context from SOURCE"]}`;
+
+export function factUserPrompt(item, unverified) {
+  return `CERTAINTY: ${unverified ? "posted by fans/users — NOT verified" : "from a news outlet / interview"}\n\n` +
+    `SOURCE TITLE: ${clean(item.title)}\nSOURCE SUMMARY: ${clean(item.summary).slice(0, 1200)}\n` +
+    `SOURCE ARTICLE: ${clean(item.text).slice(0, 3500)}`;
+}
+
+export function validateFact(data, item) {
+  if (!data || typeof data !== "object") return [null, "JSON نامعتبر"];
+  if (data.is_fact === false) return [null, "not_fact"];
+  const sourceText = [clean(item.title), clean(item.summary), clean(item.text).slice(0, 4000)].join(" ");
+  const hay = norm(sourceText);
+  const numbers = new Set(sourceText.match(/\d+/g) || []);
+  const animeTitle = String(data.anime_title || "").replace(/\s+/g, " ").trim();
+  const headline = cleanFa(data.headline);
+  if (headline.length < 20 || headline.length > 400 || faLetters(headline) < 12) return [null, "تیتر فکت مناسب نیست"];
+  const problem = checkText(headline, hay, numbers);
+  if (problem) return [null, problem];
+  const reaction = cleanFa(data.reaction);
+  const details = [];
+  for (let d of [].concat(data.details || []).slice(0, 2)) {
+    d = cleanFa(d);
+    if (d && d.length <= 320 && faLetters(d) >= 8 && !checkText(d, hay, numbers)) details.push(soften(d));
+  }
+  let emoji = String(data.emoji || "").trim();
+  if (!emoji || emoji.length > 4 || /[A-Za-z0-9؀-ۿ]/.test(emoji)) emoji = "🤯";
+  return [{ animeTitle, emoji, headline: soften(headline), reaction: reaction.length <= 120 ? reaction : "", details }, ""];
+}
+
+/** کپشن فکت: تیتر + واکنش + توضیح + #فکت + امضا */
+export function renderFactCaption(r, footer) {
+  const head = escapeHtml(faDigitsOutsideTitles(r.headline)).replace(/«([^»]{1,140})»/g, "«<b>$1</b>»");
+  const parts = [`${r.emoji || "🤯"} ${head}`];
+  if (r.reaction) parts.push(escapeHtml(r.reaction));
+  if (r.details && r.details.length) parts.push(r.details.map((d) => escapeHtml(faDigitsOutsideTitles(d))).join("\n"));
+  parts.push("#فکت #اخبار_انیمه");
+  if (footer) parts.push(escapeHtml(footer));
+  return parts.join("\n\n").slice(0, 1024);
+}

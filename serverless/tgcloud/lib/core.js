@@ -8,6 +8,16 @@ export const DEFAULT_FEEDS = [
 
 const ENTITIES = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", "#39": "'" };
 
+// منبع‌های فکت (بررسی‌شده: RSS دارن). ردیت = حرف کاربرا، قطعی حساب نمیشه
+export const FACT_FEEDS = [
+  { name: "ANN Interviews & Features", url: "https://www.animenewsnetwork.com/feature/rss.xml?ann-edition=us", type: "fact" },
+  { name: "ANN Interest", url: "https://www.animenewsnetwork.com/interest/rss.xml?ann-edition=us", type: "fact" },
+  { name: "Sakuga Blog", url: "https://blog.sakugabooru.com/feed/", type: "fact" },
+  { name: "Reddit r/anime", url: "https://www.reddit.com/r/anime/top/.rss?t=day", type: "fact", unverified: true },
+  { name: "Reddit r/manga", url: "https://www.reddit.com/r/manga/top/.rss?t=week", type: "fact", unverified: true },
+  { name: "The Canipa Effect", url: "https://www.youtube.com/feeds/videos.xml?channel_id=UCz4ZjuO7HrynjRrRlur1yWg", type: "fact" },
+];
+
 export function decodeEntities(s) {
   return String(s || "")
     .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(+n))
@@ -38,7 +48,8 @@ export function parseFeed(xml) {
   for (const b of blocks) {
     const title = stripHtml(tag(b, "title"));
     let link = stripHtml(tag(b, "link")) || attr(b, "link", "href");
-    const descRaw = tag(b, "description") || tag(b, "summary") || tag(b, "content:encoded") || tag(b, "content");
+    const descRaw = tag(b, "description") || tag(b, "summary") || tag(b, "content:encoded") || tag(b, "content")
+      || tag(b, "media:description");
     const image = attr(b, "media:content", "url") || attr(b, "media:thumbnail", "url") || attr(b, "enclosure", "url")
       || (decodeEntities(descRaw).match(/<img[^>]+src=["']([^"']+)["']/i) || [])[1] || "";
     const published = stripHtml(tag(b, "pubDate") || tag(b, "published") || tag(b, "updated"));

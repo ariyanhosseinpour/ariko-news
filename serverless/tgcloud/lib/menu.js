@@ -69,6 +69,7 @@ export async function statusText(p) {
 
 // کارت هر منبع (مثل بات قدیمی): وضعیت، نوع، لینک، آخرین بررسی + دکمه‌های حذف/غیرفعال/سایت
 function sourceClass(f) {
+  if (f.type === "fact") return f.unverified ? "🧠 فکت (حرف کاربرا؛ تأییدنشده)" : "🧠 فکت / مصاحبه";
   if (isXFeed(f)) return "غیررسمی / لیک (X)";
   const t = (f.name || "").toLowerCase(), u = (f.url || "").toLowerCase();
   if (t.includes("official")) return "رسمی";

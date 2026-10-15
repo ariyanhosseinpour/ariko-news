@@ -1,8 +1,9 @@
 // منطق اصلی بات خبری روی Telegram Serverless (کارهای سبک).
 // کارهای سنگین (درست کردن عکسی که تلگرام لینکش رو قبول نمی‌کنه) به صورت «job» برای برنامه‌ی کامپیوتر
 // (serverless_agent.py) می‌مونه؛ تا وقتی کامپیوتر روشن نشده، خبر بدون عکس منتشر نمیشه.
-import { AGENT_SYSTEM, agentUserPrompt, parseJson, validate, releasePlausible, localizeDate, renderCaption } from "./caption.js";
-import { DEFAULT_FEEDS, importance, eventType, guessAnimeName, DEFAULT_MIN_IMPORTANCE, parseFeed, parseArticle, hashKey, isXFeed, xHandle, parseXSyndication, parseXBridge, SYSTEM_PROMPT, buildPrompt, extractCaption, postCaption,
+import { AGENT_SYSTEM, agentUserPrompt, parseJson, validate, releasePlausible, localizeDate, renderCaption,
+         FACT_SYSTEM, factUserPrompt, validateFact, renderFactCaption } from "./caption.js";
+import { DEFAULT_FEEDS, FACT_FEEDS, importance, eventType, guessAnimeName, DEFAULT_MIN_IMPORTANCE, parseFeed, parseArticle, hashKey, isXFeed, xHandle, parseXSyndication, parseXBridge, SYSTEM_PROMPT, buildPrompt, extractCaption, postCaption,
          escapeHtml } from "./core.js";
 
 export const OWNER_ID = 513902877;
@@ -24,7 +25,10 @@ export async function isAdmin(p, uid) {
   return (await admins(p)).includes(Number(uid));
 }
 export async function feeds(p) {
-  return (await cfg(p, "feeds", null)) || DEFAULT_FEEDS;
+  const list = (await cfg(p, "feeds", null)) || DEFAULT_FEEDS;
+  const removed = new Set((await cfg(p, "removed_feeds", [])) || []);
+  // منبع‌های فکت خودکار اضافه میشن (مگه اینکه ادمین حذفشون کرده باشه)
+  return [...list, ...FACT_FEEDS.filter((f) => !removed.has(f.url) && !list.some((x) => x.url === f.url))];
 }
 // ───────── عکس: اول با لینک، اگه تلگرام قبول نکرد خود سرور دانلود و آپلود می‌کنه ─────────
 const PHOTO_TYPES = ["image/jpeg", "image/png", "image/webp"];
@@ -181,6 +185,7 @@ export async function agentCaption(p, item, meta) {
 // ───────── جمع‌آوری خبر ─────────
 export async function collect(p, pre = null) {
   const report = { checked: 0, added: 0, low: 0, errors: [] };
+  let factCalls = 0;
   const minImp = Number(await cfg(p, "min_importance", DEFAULT_MIN_IMPORTANCE));
   for (const f of await feeds(p)) {
     if (f.active === false) continue;                         // منبع غیرفعال
@@ -210,6 +215,19 @@ export async function collect(p, pre = null) {
       await p.kv.set(seenKey, 1);
       if (first) continue;                                    // بار اول فقط علامت‌گذاری (سیل خبرهای قدیمی نیاد)
       if (it.leak && !it.image) { await logDecision(p, f, it, null, "🖼 پست X بدون عکس"); continue; }
+      if (f.type === "fact") {                                 // منبع فکت: فیلتر اهمیت نداره، AI فکت جالب پیدا می‌کنه
+        if (factCalls >= MAX_FACT_CALLS) { await p.kv.del(seenKey); break; }   // بقیه برای چک بعدی
+        factCalls++;
+        try {
+          const r = await addFact(p, f, it);
+          if (r === "ok") { report.added++; await logDecision(p, f, it, null, "🧠 فکت فرستاده شد"); }
+          else await logDecision(p, f, it, null, r === "dup" ? "♻️ فکت تکراری" : "🧠 فکت جالبی نداشت");
+        } catch (e) {
+          report.errors.push(`${it.title.slice(0, 40)}: ${e.message}`);
+          await logDecision(p, f, it, null, `⚠️ خطا: ${String(e.message || e).slice(0, 80)}`);
+        }
+        continue;
+      }
       const official = /official/i.test(f.name) || /crunchyroll/i.test(f.name + f.url);
       let imp = importance(it, official);
       if (imp.score < minImp && imp.score + 20 >= minImp) {   // فقط وقتی محبوبیت می‌تونه نتیجه رو عوض کنه، AniList رو بپرس
@@ -225,8 +243,9 @@ export async function collect(p, pre = null) {
         continue;
       }
       try {
-        if ((await addNews(p, f, it)) === "not_news") {
-          await logDecision(p, f, it, imp, "🚫 AI گفت خبر نیست (نقد/راهنما/لیست…)");
+        const res = await addNews(p, f, it);
+        if (res === "not_news" || res === "dup") {
+          await logDecision(p, f, it, imp, res === "dup" ? "♻️ تکراری (از منبع دیگه اومده بود)" : "🚫 AI گفت خبر نیست (نقد/راهنما/لیست…)");
         } else {
           report.added++;
           await logDecision(p, f, it, imp, "✅ فرستاده شد");
@@ -418,11 +437,44 @@ export async function prefetchPlan(p, force = false) {
     if (isXFeed(f)) {
       if (!force && st && Date.now() - st.at < (st.wait || X_EVERY_MS)) continue;
       out.push({ url: xUrl(xHandle(f)), x: true });
-    } else if (st && ((st.error && /request failed|fetch|HTTP (?:403|429|5\d\d)/i.test(st.error)) || st.via === "pre")) {
+    } else if (/reddit\.com/.test(f.url) || (st && ((st.error && /request failed|fetch|HTTP (?:403|429|5\d\d)/i.test(st.error)) || st.via === "pre"))) {
       out.push({ url: f.url });
     }
   }
   return out;
+}
+
+const MAX_FACT_CALLS = 3;                                     // هر چک حداکثر ۳ مطلب فکت به AI داده میشه
+const norm = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+
+async function addFact(p, feed, it) {
+  let article = { image: "", text: "", videos: [], images: [] };
+  if (!/reddit\.com|youtube\.com/.test(it.link)) {
+    try {
+      const res = await p.fetch(it.link, { headers: { "User-Agent": "Mozilla/5.0 (ARIKO news)" } });
+      if (res.ok) article = parseArticle(await res.text());
+    } catch (e) { /* خلاصه‌ی RSS کافیه */ }
+  }
+  const item = { title: it.title, summary: it.summary, text: article.text, link: it.link };
+  const { text, model } = await geminiRaw(p, FACT_SYSTEM, factUserPrompt(item, !!feed.unverified), true);
+  const [fact, why] = validateFact(parseJson(text), item);
+  if (!fact) return why === "not_fact" ? "not_fact" : (() => { throw new Error(`خروجی فکت رد شد: ${why}`); })();
+  const nums = (fact.headline.replace(/[۰-۹]/g, (d) => "۰۱۲۳۴۵۶۷۸۹".indexOf(d)).match(/\d+/g) || []).sort().join(",");
+  const dk = "dupf:" + hashKey(norm(fact.animeTitle) + "|" + (nums || norm(it.title).split(" ").slice(0, 6).join(" ")));
+  if (await p.kv.get(dk)) return "dup";
+  await p.kv.set(dk, Date.now());
+  const meta = fact.animeTitle ? await anilistMeta(p, guessAnimeName(fact.animeTitle) || fact.animeTitle) : null;
+  const pic = [article.image, it.image].find((u) => u && !GENERIC_IMAGE.test(u)) || "";
+  const images = [meta && meta.cover, pic].filter(Boolean);
+  const id = hashKey(it.link + Date.now());
+  const news = { id, kind: "fact", fact, title: it.title, link: it.link, source: feed.name, model,
+                 image: images[0] || "", images: images.length > 1 ? images : undefined, anime: fact.animeTitle,
+                 caption: fact.headline, status: "pending", file_id: "", created: Date.now(),
+                 summary: String(it.summary || "").slice(0, 1500), published: it.published || "" };
+  if (!news.image) return "not_fact";                           // فکت بدون عکس منتشر نمیشه
+  await p.kv.set("news:" + id, news);
+  await preview(p, news);
+  return "ok";
 }
 
 async function addNews(p, feed, it) {
@@ -438,6 +490,12 @@ async function addNews(p, feed, it) {
   const meta = await anilistMeta(p, guessAnimeName(it.title));
   const out = await agentCaption(p, item, meta);
   if (out.notNews) return "not_news";
+  if (item.eventType !== "other" && out.animeTitle) {         // همین خبر از یه منبع دیگه قبلاً اومده؟
+    const dk = "dup:" + hashKey(norm(out.animeTitle) + "|" + item.eventType);
+    const at = await p.kv.get(dk);
+    if (at && Date.now() - at < 48 * 3600e3) return "dup";
+    await p.kv.set(dk, Date.now());
+  }
   let image = article.image || it.image || "";
   if (!image || GENERIC_IMAGE.test(image)) image = (meta && (meta.banner || meta.cover)) || image;   // لوگوی سایت به‌جای عکس خبر
   const id = hashKey(it.link + Date.now());
@@ -551,15 +609,18 @@ export async function agentUpdates(p) {
 
 function previewText(p, news) {
   // مثل آرشیو بات قدیمی: کپشن تمیز + برچسب «با AI بازنویسی شده» (این برچسب‌ها توی کانال نمیان)
-  const note = (news.trailer_note ? `⚠️ تریلر: ${escapeHtml(news.trailer_note)}\n` : "") +
+  const note = (news.kind === "fact" ? "🧠 فکت" + (/reddit/i.test(news.source) ? " (از ردیت؛ تأییدنشده — قبل از انتشار چک کن)" : "") + "\n" : "") +
+    (news.trailer_note ? `⚠️ تریلر: ${escapeHtml(news.trailer_note)}\n` : "") +
     `✅ 🤖 این متن با AI بازنویسی شده (${escapeHtml(news.model || "")})\n` +
     `— <i>${escapeHtml(news.source)}</i>` + (news.importance !== undefined ? ` · ⭐️ ${news.importance}/100` : "");
-  const body = news.render ? renderCaption(news.render, "", 1024 - note.length - 4) : escapeHtml(news.caption);
+  const body = news.kind === "fact" ? renderFactCaption(news.fact, "").slice(0, 1024 - note.length - 4)
+    : news.render ? renderCaption(news.render, "", 1024 - note.length - 4) : escapeHtml(news.caption);
   return `${body}\n\n${note}`;
 }
 
 /** کپشن نهایی کانال: همون کپشن + امضا (بدون برچسب‌های ادمین) */
 function channelCaption(news, footer) {
+  if (news.kind === "fact") return renderFactCaption(news.fact, footer);
   return news.render ? renderCaption(news.render, footer) : postCaption(news.caption, footer);
 }
 
