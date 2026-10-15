@@ -11,6 +11,8 @@
 تنظیمات (فایل .env کنار همین فایل):
   NEWS_BOT_TOKEN=...       توکن همون بات خبری
   TGCLOUD_TOKEN=...        BotFather → بات → Serverless → CLI Access → Access token
+  UPSTASH_URL=...          همون مقدارهایی که توی Secrets گیت‌هاب گذاشتی (پایگاه‌داده‌ی Upstash)
+  UPSTASH_TOKEN=...
   TGCLOUD_PROJECT=...      پوشه‌ی پروژه (همون که پوشه‌ی tgcloud توشه)؛ پیش‌فرض: serverless کنار همین فایل
   NEWS_PROXY=http://127.0.0.1:10809   (اختیاری) پروکسی فیلترشکن
 
@@ -456,6 +458,9 @@ def relay(updates):
 def main():
     if not TG_CLOUD or ":" not in TG_CLOUD:
         sys.exit("TGCLOUD_TOKEN رو توی .env بذار (BotFather → Serverless → CLI Access → Access token).")
+    if not (os.environ.get("UPSTASH_URL", "").strip() and os.environ.get("UPSTASH_TOKEN", "").strip()):
+        # بات روی Upstash نصب شده؛ بدون این دو خط برنامه با دیتابیس قدیمی کار می‌کرد و هیچی به بات نمی‌رسید
+        sys.exit("UPSTASH_URL و UPSTASH_TOKEN رو کنار TGCLOUD_TOKEN توی فایل .env بذار، بعد دوباره اجرا کن.")
     if "--restore" in sys.argv:                                  # تنظیمات بات از فایل restore.json
         with open(os.path.join(BASE_DIR, "restore.json"), encoding="utf-8") as fh:
             log(json.dumps(cloud("restore", cfg=json.load(fh)), ensure_ascii=False))
