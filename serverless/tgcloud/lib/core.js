@@ -220,8 +220,8 @@ export function eventType(title, summary) {
   return "other";
 }
 
-/** { score, reasons } — مثل بات قدیمی (فعلاً بدون محبوبیت AniList) */
-export function importance(item, isOfficial = false) {
+/** { score, reasons } — مثل بات قدیمی؛ meta = { popularity, year } از AniList (اگه پیدا شد) */
+export function importance(item, isOfficial = false, meta = null) {
   const text = `${item.title} ${String(item.summary || "").slice(0, 600)}`.toLowerCase();
   const type = eventType(item.title, item.summary);
   let score = IMPORTANCE_BASE[type] ?? 25;
@@ -232,6 +232,26 @@ export function importance(item, isOfficial = false) {
     if (!re.test(text) || ((label === "بازی" || label === "مانگا/رمان") && aboutAnime)) continue;
     score += d; reasons.push(`${d} ${label}`);
   }
+  const pop = Number((meta && meta.popularity) || 0);
+  if (pop >= 300000) { score += 20; reasons.push("+20 انیمه خیلی محبوب"); }
+  else if (pop >= 100000) { score += 12; reasons.push("+12 انیمه محبوب"); }
+  else if (pop >= 30000) { score += 5; reasons.push("+5 انیمه شناخته‌شده"); }
+  else if (pop > 0 && pop < 5000) {
+    // انیمه‌ای که هنوز پخش نشده طبیعتاً محبوبیت کمی داره؛ جریمه فقط برای اثرهای قدیمی‌تر
+    const year = Number((meta && meta.year) || 0);
+    if (year && year < new Date().getUTCFullYear()) { score -= 10; reasons.push("-10 انیمه کم‌مخاطب"); }
+  }
   if (isOfficial) { score += 5; reasons.push("+5 منبع رسمی"); }
   return { score: Math.max(0, Math.min(100, score)), reasons, type };
+}
+
+/** حدس اسم انیمه از تیتر خبر: «Oshi no Ko Season 3 Announced» → «Oshi no Ko» */
+export function guessAnimeName(title) {
+  let t = String(title || "").replace(/^@\w+:\s*/, "").trim();
+  const quoted = t.match(/["“‘']([^"”’']{3,80})["”’']/);
+  if (quoted) return quoted[1].trim();
+  t = t.split(/\s*(?::|\s[-–—|]\s)\s*/)[0];
+  const cut = t.search(/(?:'s\b|’s\b|\s(?:TV\s+)?Anime\b|\s(?:Season|Part|Cour)\s+\d|\s(?:\d+(?:st|nd|rd|th)\s+Season|Final\s+Season|Sequel|Film|Movie|Gets|Reveals?|Announce[sd]?|Unveils?|Confirm(?:s|ed)?|Receives?|Releases?|Delayed|Postponed|Premieres?|Streams?|Casts?|Adds?|Is|Has|Will|Opens?|Debuts?|Ends?|Launches?|Teaser|Trailer|Key\s+Visual|Visual|PV|Promo|Reportedly|In\s+Production|Returns?|Shares?|Drops?|Hits?|Tops?|Wins?|Earns?|Sets?|Coming)\b)/i);
+  const name = (cut > 0 ? t.slice(0, cut) : t).replace(/^(?:The\s+)?(?:New|Leak|Rumou?r|Report|Breaking)\s*:?\s*/i, "").trim();
+  return name.length >= 3 && name.split(/\s+/).length <= 8 ? name : "";
 }

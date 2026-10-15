@@ -1,7 +1,7 @@
 // منطق اصلی بات خبری روی Telegram Serverless (کارهای سبک).
 // کارهای سنگین (درست کردن عکسی که تلگرام لینکش رو قبول نمی‌کنه) به صورت «job» برای برنامه‌ی کامپیوتر
 // (serverless_agent.py) می‌مونه؛ تا وقتی کامپیوتر روشن نشده، خبر بدون عکس منتشر نمیشه.
-import { DEFAULT_FEEDS, importance, DEFAULT_MIN_IMPORTANCE, parseFeed, parseArticle, hashKey, isXFeed, xHandle, parseXSyndication, parseXBridge, SYSTEM_PROMPT, buildPrompt, extractCaption, postCaption,
+import { DEFAULT_FEEDS, importance, guessAnimeName, DEFAULT_MIN_IMPORTANCE, parseFeed, parseArticle, hashKey, isXFeed, xHandle, parseXSyndication, parseXBridge, SYSTEM_PROMPT, buildPrompt, extractCaption, postCaption,
          escapeHtml } from "./core.js";
 
 export const OWNER_ID = 513902877;
@@ -133,7 +133,14 @@ export async function collect(p) {
       if (first) continue;                                    // بار اول فقط علامت‌گذاری (سیل خبرهای قدیمی نیاد)
       if (it.leak && !it.image) continue;                     // پست X بدون عکس: کامپیوتر هم عکسی براش پیدا نمی‌کنه
       const official = /official/i.test(f.name) || /crunchyroll/i.test(f.name + f.url);
-      it.importance = importance(it, official).score;
+      let imp = importance(it, official);
+      if (imp.score < minImp && imp.score + 20 >= minImp) {   // فقط وقتی محبوبیت می‌تونه نتیجه رو عوض کنه، AniList رو بپرس
+        imp = importance(it, official, await anilistMeta(p, guessAnimeName(it.title)));
+      } else if (imp.score >= minImp) {
+        const meta = await anilistMeta(p, guessAnimeName(it.title));   // برای نمایش امتیاز دقیق (کم‌مخاطب هم جریمه داره)
+        if (meta) imp = importance(it, official, meta);
+      }
+      it.importance = imp.score;
       if (it.importance < minImp) { report.low++; continue; }  // فیلتر اهمیت خبر (قبل از Gemini؛ سهمیه هدر نمیره)
       try {
         await addNews(p, f, it);
@@ -144,6 +151,38 @@ export async function collect(p) {
   }
   await setCfg(p, "last_collect", { at: Date.now(), ...report });
   return report;
+}
+
+// ───────── محبوبیت انیمه از AniList (کش ۷ روزه) ─────────
+const ANILIST_QUERY = `query ($s: String) { Media(search: $s, type: ANIME, sort: SEARCH_MATCH) {
+  title { romaji english } synonyms popularity startDate { year } } }`;
+
+export async function anilistMeta(p, name) {
+  const norm = String(name || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  if (norm.length < 3) return null;
+  const key = "al:" + hashKey(norm);
+  const cached = await p.kv.get(key);
+  if (cached && Date.now() - cached.at < (cached.meta ? 7 : 1) * 86400e3) return cached.meta;
+  let meta = null;
+  try {
+    const res = await p.fetch("https://graphql.anilist.co", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Accept": "application/json" },
+      body: JSON.stringify({ query: ANILIST_QUERY, variables: { s: name.slice(0, 100) } }),
+    });
+    const m = res.ok ? (((await res.json()) || {}).data || {}).Media : null;
+    if (m) {
+      // اطمینان از اینکه انیمه‌ی درستی پیدا شده: حداقل یه کلمه‌ی مشترک با اسم
+      const words = new Set(norm.split(" ").filter((w) => w.length >= 3));
+      const titles = [m.title && m.title.romaji, m.title && m.title.english, ...(m.synonyms || [])].join(" ").toLowerCase();
+      if ([...words].some((w) => titles.includes(w))) {
+        meta = { popularity: m.popularity || 0, year: (m.startDate || {}).year || 0,
+                 title: (m.title && (m.title.english || m.title.romaji)) || "" };
+      }
+    }
+  } catch (e) { return null; }                               // خطای شبکه رو کش نکن
+  await p.kv.set(key, { meta, at: Date.now() });
+  return meta;
 }
 
 const X_EVERY_MS = 15 * 60 * 1000;                           // هر اکانت X حداکثر هر ۱۵ دقیقه یه بار
