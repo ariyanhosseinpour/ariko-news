@@ -1,5 +1,5 @@
 // منوی دکمه‌ای بات (مثل بات قدیمی): کیبورد پایین صفحه + دکمه‌های شیشه‌ای.
-import { cfg, feeds, admins, pendingNews, OWNER_ID } from "./news.js";
+import { cfg, feeds, admins, pendingNews, OWNER_ID, RANK_SOURCES } from "./news.js";
 import { escapeHtml, hashKey, isXFeed, xHandle } from "./core.js";
 
 export const B = {
@@ -12,6 +12,7 @@ export const B = {
   footer: "✍️ امضای پست",
   ai: "🔑 تنظیم هوش مصنوعی",
   admins: "👤 ادمین‌ها",
+  rank: "🧪 تست رنکینگ هفتگی",
   cancel: "❌ لغو",
 };
 
@@ -28,6 +29,7 @@ export const OLD = {
   "📡 مدیریت کانال‌های پست": B.channel,
   "✍️ امضای کانال خبر": B.footer,
   "🔑 تنظیم سرویس AI": B.ai,
+  "🧪 تست رنکینگ هفتگی": B.rank,
 };
 
 export function mainKeyboard() {
@@ -38,6 +40,7 @@ export function mainKeyboard() {
       [{ text: B.feeds }, { text: B.addFeed }],
       [{ text: B.channel }, { text: B.footer }],
       [{ text: B.ai }, { text: B.admins }],
+      [{ text: B.rank }],
     ],
     resize_keyboard: true,
     is_persistent: true,
@@ -151,3 +154,10 @@ export const WAIT_PROMPT = {
   key: "🔑 کلید Gemini رو بفرست (با AIza شروع میشه).\nپیامت بعد از ذخیره پاک میشه.",
   admin: "👤 یه پیام از اون شخص رو برام <b>فوروارد</b> کن، یا آیدی عددی‌اش رو بفرست.",
 };
+
+export const rankView = () => ({
+  text: "🧪 <b>تست رنکینگ هفتگی</b>\n\nیکی از ۳ منبع رو انتخاب کن.\n" +
+    "این فقط پیش‌نمایشه و توی کانال منتشر نمیشه.\n\n🖥 کارت روی کامپیوتر ساخته میشه (برنامه‌ی serverless_agent باید روشن باشه).",
+  reply_markup: { inline_keyboard: [...Object.entries(RANK_SOURCES).map(([k, label]) => [{ text: label, callback_data: `rk:${k}` }]),
+                                    [{ text: "❌ بستن", callback_data: "rk:close" }]] },
+});

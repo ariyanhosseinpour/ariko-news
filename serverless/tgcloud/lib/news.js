@@ -270,6 +270,16 @@ export async function reject(p, id) {
   return "❌ رد شد";
 }
 
+// ───────── تست رنکینگ هفتگی: ساخت کارت (عکس) کار سنگینه → برای کامپیوتر ─────────
+export const RANK_SOURCES = { anitrendz: "🟡 AniTrendz — Top Anime", animecorner: "🔴 Anime Corner — Top Anime",
+                              mal: "🔵 MyAnimeList — Top Airing" };
+
+export async function rankJob(p, source, chatId) {
+  const job = { id: "r" + source + chatId, type: "rank", source, chat_id: chatId, created: Date.now(), taken: 0 };
+  await p.kv.set("job:" + job.id, job);
+  return Date.now() - ((await cfg(p, "agent_seen", 0)) || 0) < 120000;   // کامپیوتر روشنه؟
+}
+
 // ───────── صف بررسی: خبرهایی که هنوز تأیید/رد نشدن ─────────
 export async function pendingNews(p) {
   const rows = (await p.kv.list("news:")).map((r) => r.value)
@@ -305,6 +315,14 @@ export async function agentPoll(p) {
 export async function agentDone(p, { job_id, ok, file_id, error }) {
   const job = await p.kv.get("job:" + job_id);
   if (!job) return { ok: true };
+  if (job.type === "rank") {                                  // کارت رنکینگ: کامپیوتر خودش عکس رو فرستاده
+    await p.kv.del("job:" + job_id);
+    if (!ok) {
+      try { await p.api("sendMessage", { chat_id: job.chat_id, parse_mode: "HTML",
+        text: `⚠️ ساخت کارت رنکینگ نشد:\n${escapeHtml(String(error || "").slice(0, 300))}` }); } catch (e) { /* */ }
+    }
+    return { ok: true };
+  }
   const news = await p.kv.get("news:" + job.news_id);
   if (!ok) {
     job.taken = 0;

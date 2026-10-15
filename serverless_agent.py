@@ -182,6 +182,24 @@ def handle(job):
     return file_id
 
 
+_old_bot = None
+
+
+def handle_rank(job):
+    """کارت رنکینگ هفتگی رو با همون کد بات قدیمی (news.py کنار همین فایل) می‌سازه و می‌فرسته."""
+    global _old_bot
+    if _old_bot is None:
+        if not os.path.exists(os.path.join(BASE_DIR, "news.py")):
+            raise RuntimeError("news.py (بات قدیمی) کنار serverless_agent.py نیست؛ کارت رنکینگ با کد اون ساخته میشه.")
+        sys.path.insert(0, BASE_DIR)
+        import news as _old_bot                                   # فقط توابع؛ بات قدیمی اجرا نمیشه
+    path, caption, _label = _old_bot._weekly_test_build(job["source"])
+    with open(path, "rb") as fh:
+        raw = fh.read()
+    caption = caption.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    return _send_photo(job["chat_id"], _fix_image(raw), caption, None)
+
+
 def main():
     if not TG_CLOUD or ":" not in TG_CLOUD:
         sys.exit("TGCLOUD_TOKEN رو توی .env بذار (BotFather → Serverless → CLI Access → Access token).")
@@ -201,9 +219,11 @@ def main():
                 if r.get("added"):
                     log(f"📰 {r['added']} خبر جدید")
             for job in cloud("poll").get("jobs") or []:
-                log(f"🖼 درست کردن عکس خبر {job.get('news_id')} …")
+                is_rank = job.get("type") == "rank"
+                log(f"📊 ساخت کارت رنکینگ {job.get('source')} …" if is_rank
+                    else f"🖼 درست کردن عکس خبر {job.get('news_id')} …")
                 try:
-                    fid = handle(job)
+                    fid = handle_rank(job) if is_rank else handle(job)
                     cloud("done", result={"job_id": job["id"], "ok": True, "file_id": fid})
                     log("   ✅ فرستاده شد")
                 except Exception as exc:

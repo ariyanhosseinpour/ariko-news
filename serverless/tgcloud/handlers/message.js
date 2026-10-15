@@ -2,7 +2,7 @@
 import { platform } from "../lib/platform.js";
 import { isAdmin, cfg, setCfg, feeds, collect, admins, pendingNews, resendPreview, DEFAULT_FOOTER } from "../lib/news.js";
 import { escapeHtml, parseXHandle, X_PREFIX } from "../lib/core.js";
-import { B, OLD, mainKeyboard, cancelKeyboard, statusText, feedCard, aiView, adminsView, channelView, footerView,
+import { B, OLD, mainKeyboard, cancelKeyboard, statusText, feedCard, aiView, adminsView, channelView, footerView, rankView,
          setWait, getWait, clearWait, WAIT_PROMPT } from "../lib/menu.js";
 
 const COMMANDS = { "/start": B.status, "/status": B.status, "/check": B.check, "/feeds": B.feeds,
@@ -57,6 +57,7 @@ export default async function (msg, ctx) {
     case B.footer: return send(...view(await footerView(p, DEFAULT_FOOTER)));
     case B.ai: return send(...view(await aiView(p)));
     case B.admins: return send(...view(await adminsView(p)));
+    case B.rank: return send(...view(rankView()));
   }
 
   // ───── دستورهای قدیمی (هنوز کار می‌کنن) ─────

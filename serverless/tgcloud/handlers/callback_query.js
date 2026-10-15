@@ -1,6 +1,6 @@
 // دکمه‌های شیشه‌ای: «✅ انتشار / ❌ رد» زیر خبر، و دکمه‌های منو (منبع‌ها، هوش مصنوعی، ادمین‌ها، …).
 import { platform } from "../lib/platform.js";
-import { isAdmin, publish, reject, feeds, setCfg, cfg, admins } from "../lib/news.js";
+import { isAdmin, publish, reject, feeds, setCfg, cfg, admins, rankJob, RANK_SOURCES } from "../lib/news.js";
 import { escapeHtml, hashKey } from "../lib/core.js";
 import { feedCard, aiView, adminsView, setWait, cancelKeyboard, WAIT_PROMPT } from "../lib/menu.js";
 
@@ -82,6 +82,19 @@ export default async function (q, ctx) {
         return edit(await adminsView(p));
       }
       return answer();
+    }
+    case "rk": {                                             // تست رنکینگ هفتگی
+      if (action === "close") {
+        await answer("بسته شد");
+        return p.api("deleteMessage", { chat_id: chat, message_id: mid }).catch(() => {});
+      }
+      if (!RANK_SOURCES[action]) return answer();
+      const online = await rankJob(p, action, chat);
+      await answer(online ? "⏳ داره ساخته میشه…" : "🖥 سیستم رو روشن کن");
+      return edit({ text: `🧪 ${RANK_SOURCES[action]}\n\n` + (online
+        ? "⏳ کامپیوتر داره کارت رو می‌سازه؛ تا یکی دو دقیقه دیگه برات میاد."
+        : "🖥 <b>سیستم رو روشن کن</b> (serverless_agent)؛ به محض روشن شدن کارت رو می‌سازه و برات می‌فرسته."),
+        reply_markup: { inline_keyboard: [] } });
     }
     case "ch": return action === "set" ? ask("channel") : answer();
     case "ft": return action === "set" ? ask("footer") : answer();
