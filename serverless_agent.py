@@ -64,12 +64,13 @@ def log(text):
 # ماژول کوچیکی که فقط موقع اجرا فرستاده میشه (deploy نمیشه) و توابع lib/news.js رو صدا می‌زنه
 PC_MODULE = """
 import { platform } from '../lib/platform.js';
-import { agentPoll, agentDone, collect, agentUpdates, prefetchPlan, diagnose, recoverLost, clearImageJobs } from '../lib/news.js';
+import { agentPoll, agentDone, collect, agentUpdates, prefetchPlan, diagnose, recoverLost, clearImageJobs, redoNews } from '../lib/news.js';
 export default async function (input) {
   const p = platform();
   if (input.op === 'poll') return { jobs: await agentPoll(p), updates: await agentUpdates(p) };
   if (input.op === 'done') return await agentDone(p, input.result || {});
   if (input.op === 'collect') return await collect(p, input.prefetched || null);
+  if (input.op === 'redo') return await redoNews(p, input.words || []);
   if (input.op === 'clearjobs') return await clearImageJobs(p);
   if (input.op === 'recover') return await recoverLost(p, input.prefetched || null);
   if (input.op === 'diagnose') return await diagnose(p, input.prefetched || null);
@@ -421,6 +422,13 @@ def relay(updates):
 def main():
     if not TG_CLOUD or ":" not in TG_CLOUD:
         sys.exit("TGCLOUD_TOKEN رو توی .env بذار (BotFather → Serverless → CLI Access → Access token).")
+    if "--redo" in sys.argv:                                     # --redo "One-Punch|Black Clover" → از نو ساخته میشن
+        words = sys.argv[sys.argv.index("--redo") + 1].split("|")
+        r = cloud("redo", words=words)
+        log(f"♻️ {len(r.get('redone') or [])} خبر از نو ساخته میشه:")
+        for t in r.get("redone") or []:
+            log(f"   {t}")
+        return
     if "--clear-jobs" in sys.argv:
         log(f"🧹 پاک شد: {cloud('clearjobs').get('gone')}")
         return

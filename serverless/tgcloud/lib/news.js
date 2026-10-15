@@ -312,6 +312,22 @@ export async function clearImageJobs(p) {
   return { gone };
 }
 
+/** خبرهای منتشرنشده‌ای که تیترشون یکی از این کلمه‌ها رو داره از نو ساخته میشن (نسخه‌ی قبلی کنار میره) */
+export async function redoNews(p, words) {
+  const want = (words || []).map((w) => String(w).toLowerCase().trim()).filter(Boolean);
+  const redone = [];
+  for (const { value: n } of await p.kv.list("news:")) {
+    if (!n || n.status === "posted" || n.status === "replaced") continue;
+    if (!want.some((w) => String(n.title || "").toLowerCase().includes(w))) continue;
+    n.status = "replaced";
+    await p.kv.set("news:" + n.id, n);
+    await p.kv.del("job:j" + n.id); await p.kv.del("job:t" + n.id);
+    await p.kv.del("seen:" + hashKey(n.link)); await p.kv.del("retry:" + hashKey(n.link));
+    redone.push(n.title);
+  }
+  return { redone };
+}
+
 // ───────── محبوبیت انیمه از AniList (کش ۷ روزه) ─────────
 const ANILIST_QUERY = `query ($s: String) { Media(search: $s, type: ANIME, sort: SEARCH_MATCH) {
   title { romaji english } synonyms popularity startDate { year } genres description(asHtml: false)
