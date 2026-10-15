@@ -345,6 +345,76 @@ def handle_insta(job):
     return ""
 
 
+def _find_trailer(mod, job):
+    """لینک تریلر توی خبر نبود → مثل بات قدیمی توی یوتیوب (اسم ژاپنی/رومانجی + PV)؛ فقط ویدیوهای تازه."""
+    from email.utils import parsedate_to_datetime
+    anime = (job.get("anime") or "").strip()
+    meta = (mod._news_anilist_lookup(anime) or {}) if len(anime) >= 3 else {}
+    names = [anime, meta.get("title_en"), meta.get("title_romaji"), meta.get("title_native")]
+    names = [n for i, n in enumerate(names) if n and n not in names[:i]]
+    if not names:
+        raise RuntimeError("اسم انیمه معلوم نیست که توی یوتیوب دنبال تریلرش بگردم")
+    queries = ([f"{meta['title_native']} PV"] if meta.get("title_native") else []) + \
+              [f"{meta.get('title_romaji') or anime} PV", f"{anime} trailer"]
+    results, seen = [], set()
+    for q in queries:
+        try:
+            for r in mod._trailer_search(q, by_date=True, count=8):
+                if r["url"] not in seen:
+                    seen.add(r["url"])
+                    results.append(r)
+        except Exception as exc:
+            log(f"   ⚠️ جستجوی یوتیوب: {exc}")
+    try:
+        news_ts = parsedate_to_datetime(job.get("published") or "").timestamp()
+    except Exception:
+        news_ts = time.time()
+    fresh = []
+    for r in results:
+        if mod._TRAILER_JUNK_RE.search(r["title"]) or not mod._trailer_name_match(names, r["title"]):
+            continue
+        up = mod._trailer_upload_ts(r["url"])
+        if up and not (news_ts - mod.TRAILER_MAX_AGE_DAYS * 86400 <= up <= news_ts + 3 * 86400):
+            continue
+        fresh.append(r)
+        if len(fresh) >= 3:
+            break
+    pick, sure = mod._trailer_pick(names, fresh)
+    if not pick:
+        raise RuntimeError("تریلر تازه‌ای توی یوتیوب پیدا نشد")
+    return pick["url"], sure
+
+
+def handle_trailer(job):
+    """تریلر رو دانلود می‌کنه (بهترین کیفیت زیر ۵۰ مگ) و با کپشن خبر، یه پیام، برای صاحب بات می‌فرسته."""
+    mod = old_bot()
+    url, note = job.get("url") or "", ""
+    if not url:
+        url, sure = _find_trailer(mod, job)
+        note = "\n🔎 تریلر از جستجوی یوتیوب پیدا شد" + ("" if sure else " (مطمئن نیستم خودشه؛ قبل از انتشار ببینش)")
+    caption = job.get("caption") or ""
+    if note and len(caption) + len(note) <= 1024:
+        caption += note
+    too_big = None
+    for height in [mod.TRAILER_HEIGHT] + list(mod.TRAILER_LOWER_HEIGHTS):
+        path = ""
+        try:
+            path = mod._trailer_download(url, height)
+            send_path, vmeta = mod._trailer_prepare(path)
+            with open(send_path, "rb") as fh:
+                msg = mod._send_video_with_meta(int(job["chat_id"]), fh, vmeta, caption=caption, parse_mode="HTML",
+                                                reply_markup=json.dumps(job.get("reply_markup") or {}, ensure_ascii=False),
+                                                supports_streaming=True)
+            log(f"   🎬 تریلر {height}p فرستاده شد")
+            return msg.video.file_id
+        except mod.TrailerTooBig as exc:
+            too_big = exc
+        finally:
+            if path:
+                mod._trailer_cleanup(path)
+    raise RuntimeError(f"حجم تریلر حتی با کیفیت پایین هم از ۵۰ مگ بیشتره ({too_big})")
+
+
 def relay(updates):
     """دکمه‌ها/پیام‌هایی که سرور برای منوی قدیمی فرستاده → همون handlerهای بات قدیمی."""
     mod = old_bot()
@@ -424,13 +494,14 @@ def main():
                     log(f"⚠️ منوی اینستاگرام: {exc}")
             for job in polled.get("jobs") or []:
                 kind = job.get("type")
-                log({"rank": f"📊 ساخت کارت رنکینگ {job.get('source')} …",
+                log({"trailer": f"🎬 تریلر: {str(job.get('title', ''))[:60]} …",
+                     "rank": f"📊 ساخت کارت رنکینگ {job.get('source')} …",
                      "insta": f"🎨 پست اینستاگرام: {str(job.get('news', {}).get('title', ''))[:60]} …"}.get(
                     kind, f"🖼 درست کردن عکس خبر {job.get('news_id')} …"))
                 if kind == "insta":
                     busy_until = time.time() + 15 * 60
                 try:
-                    fid = {"rank": handle_rank, "insta": handle_insta}.get(kind, handle)(job)
+                    fid = {"rank": handle_rank, "insta": handle_insta, "trailer": handle_trailer}.get(kind, handle)(job)
                     cloud("done", result={"job_id": job["id"], "ok": True, "file_id": fid})
                     log("   ✅ فرستاده شد")
                 except Exception as exc:

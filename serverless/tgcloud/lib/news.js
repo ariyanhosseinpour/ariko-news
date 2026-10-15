@@ -409,7 +409,7 @@ export async function prefetchPlan(p, force = false) {
 }
 
 async function addNews(p, feed, it) {
-  let article = { image: "", text: "" };
+  let article = { image: "", text: "", videos: [] };
   if (!it.leak) {                                             // پست X صفحه‌ی خبر نداره؛ خود متن پست کافیه
     try {
       const res = await p.fetch(it.link, { headers: { "User-Agent": "Mozilla/5.0 (ARIKO news)" } });
@@ -427,10 +427,35 @@ async function addNews(p, feed, it) {
   const news = { id, title: it.title, link: it.link, source: feed.name, image,
                  render: out.render, caption: out.render.headline, model: out.model, status: "pending", file_id: "",
                  anime: out.animeTitle || guessAnimeName(it.title),
-                 created: Date.now(), importance: it.importance, summary: String(it.summary || "").slice(0, 1500) };
+                 created: Date.now(), importance: it.importance, summary: String(it.summary || "").slice(0, 1500),
+                 published: it.published || "" };
+  const trailerNews = TRAILER_TYPES.includes(item.eventType) || /\b(?:trailer|teaser|pv)\b/i.test(it.title);
+  if (trailerNews) {                                           // خبر تریلر: ویدیو + کپشن توی یه پیام، با کامپیوتر
+    news.trailer = { url: (article.videos || [])[0] || (it.leak ? it.link : ""), anime: news.anime || "" };
+    await p.kv.set("news:" + id, news);
+    await trailerJob(p, news);
+    return "ok";
+  }
   await p.kv.set("news:" + id, news);
   await preview(p, news);
   return "ok";
+}
+
+const TRAILER_TYPES = ["trailer", "trailer_visual", "character_pv"];
+
+/** کار دانلود تریلر برای کامپیوتر؛ اگه خاموشه به ادمین‌ها خبر میده و منتظر می‌مونه */
+async function trailerJob(p, news) {
+  news.status = "needs_trailer";
+  await p.kv.set("news:" + news.id, news);
+  const job = { id: "t" + news.id, type: "trailer", news_id: news.id, url: news.trailer.url, anime: news.trailer.anime,
+                title: news.title, published: news.published || "", created: Date.now(), taken: 0, chat_id: OWNER_ID,
+                caption: previewText(p, news).slice(0, 1024), reply_markup: reviewKeyboard(news.id, news.link) };
+  await p.kv.set("job:" + job.id, job);
+  if (!(await agentOnline(p))) {
+    await notifyAdmins(p, `🎬 یه خبر <b>تریلر</b> درباره‌ی انیمه‌ی «${escapeHtml(news.anime || news.title)}» اومده.\n\n` +
+      "🖥 منتظرم <b>سیستم رو روشن کنی</b> (serverless_agent) تا تریلر رو دانلود کنم و با کپشنش برات بفرستم.",
+      { reply_markup: { inline_keyboard: [[{ text: "❌ این خبر رو رد کن", callback_data: `nw:no:${news.id}` }]] } });
+  }
 }
 
 // عکس‌های عمومی سایت (لوگو/عکس پیش‌فرض اشتراک‌گذاری) عکس خبر نیستن
@@ -487,7 +512,8 @@ export async function agentUpdates(p) {
 
 function previewText(p, news) {
   // مثل آرشیو بات قدیمی: کپشن تمیز + برچسب «با AI بازنویسی شده» (این برچسب‌ها توی کانال نمیان)
-  const note = `✅ 🤖 این متن با AI بازنویسی شده (${escapeHtml(news.model || "")})\n` +
+  const note = (news.trailer_note ? `⚠️ تریلر: ${escapeHtml(news.trailer_note)}\n` : "") +
+    `✅ 🤖 این متن با AI بازنویسی شده (${escapeHtml(news.model || "")})\n` +
     `— <i>${escapeHtml(news.source)}</i>` + (news.importance !== undefined ? ` · ⭐️ ${news.importance}/100` : "");
   const body = news.render ? renderCaption(news.render, "", 1024 - note.length - 4) : escapeHtml(news.caption);
   return `${body}\n\n${note}`;
@@ -544,8 +570,16 @@ export async function publish(p, id) {
   if (news.status === "posted") return "قبلاً منتشر شده";
   const channel = await cfg(p, "channel", "");
   if (!channel) return "کانال ثبت نشده (/setchannel)";
-  const photo = news.file_id || news.image;
   const caption = channelCaption(news, await cfg(p, "footer", DEFAULT_FOOTER));
+  if (news.video_file_id) {                                   // خبر تریلر: ویدیو با کپشن، یه پیام
+    await p.api("sendVideo", { chat_id: channel, video: news.video_file_id, caption, parse_mode: "HTML",
+                               supports_streaming: true });
+    news.status = "posted";
+    await p.kv.set("news:" + id, news);
+    return "✅ منتشر شد";
+  }
+  if (news.status === "needs_trailer") return "منتظر تریلره؛ سیستم رو روشن کن";
+  const photo = news.file_id || news.image;
   if (!photo) { await needImage(p, news, "عکسی برای این خبر نیست", "post"); return "عکس لازم داره؛ سیستم رو روشن کن"; }
   try {
     await sendPhotoSmart(p, { chat_id: channel, photo, caption, parse_mode: "HTML" }, news);
@@ -564,6 +598,7 @@ export async function reject(p, id) {
   news.status = "rejected";
   await p.kv.set("news:" + id, news);
   await p.kv.del("job:j" + id);
+  await p.kv.del("job:t" + id);
   return "❌ رد شد";
 }
 
@@ -580,11 +615,20 @@ export async function rankJob(p, source, chatId) {
 // ───────── صف بررسی: خبرهایی که هنوز تأیید/رد نشدن ─────────
 export async function pendingNews(p) {
   const rows = (await p.kv.list("news:")).map((r) => r.value)
-    .filter((n) => n && (n.status === "pending" || n.status === "needs_image"));
+    .filter((n) => n && ["pending", "needs_image", "needs_trailer"].includes(n.status));
   return rows.sort((a, b) => (b.created || 0) - (a.created || 0));
 }
 
 export async function resendPreview(p, chatId, news) {
+  if (news.video_file_id) {
+    return p.api("sendVideo", { chat_id: chatId, video: news.video_file_id, caption: previewText(p, news).slice(0, 1024),
+                                parse_mode: "HTML", supports_streaming: true, reply_markup: reviewKeyboard(news.id, news.link) });
+  }
+  if (news.status === "needs_trailer") {
+    return p.api("sendMessage", { chat_id: chatId, parse_mode: "HTML",
+      text: `🎬 «${escapeHtml(news.anime || news.title)}»\nمنتظر تریلره؛ سیستم رو روشن کن.`,
+      reply_markup: { inline_keyboard: [[{ text: "❌ رد", callback_data: `nw:no:${news.id}` }]] } });
+  }
   const photo = news.file_id || news.image;
   if (!photo || news.status === "needs_image") {
     return p.api("sendMessage", { chat_id: chatId, parse_mode: "HTML",
@@ -612,6 +656,27 @@ export async function agentPoll(p) {
 export async function agentDone(p, { job_id, ok, file_id, error }) {
   const job = await p.kv.get("job:" + job_id);
   if (!job) return { ok: true };
+  if (job.type === "trailer") {                              // کامپیوتر تریلر رو با کپشن برای صاحب بات فرستاد
+    await p.kv.del("job:" + job_id);
+    const news = await p.kv.get("news:" + job.news_id);
+    if (!news || news.status === "rejected") return { ok: true };
+    if (ok && file_id) {
+      news.video_file_id = file_id;
+      news.status = "pending";
+      await p.kv.set("news:" + news.id, news);
+      for (const id of (await admins(p)).filter((x) => x !== OWNER_ID)) {
+        try { await p.api("sendVideo", { chat_id: id, video: file_id, caption: previewText(p, news).slice(0, 1024),
+                                         parse_mode: "HTML", supports_streaming: true,
+                                         reply_markup: reviewKeyboard(news.id, news.link) }); } catch (e) { /* */ }
+      }
+    } else {                                                    // تریلر پیدا/دانلود نشد → پیش‌نمایش عادی با عکس
+      news.status = "pending";
+      news.trailer_note = String(error || "تریلر پیدا نشد").slice(0, 200);
+      await p.kv.set("news:" + news.id, news);
+      await preview(p, news);
+    }
+    return { ok: true };
+  }
   if (job.type === "insta") {                                // کاور اینستاگرام: بقیه‌ی کار با منوی بات قدیمی روی کامپیوتره
     await p.kv.del("job:" + job_id);
     if (!ok) {

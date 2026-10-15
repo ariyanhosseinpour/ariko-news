@@ -53,7 +53,10 @@ export function parseArticle(html) {
     || html.match(new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["']${p}["']`, "i")) || [])[1] || "";
   const image = decodeEntities(meta("og:image") || meta("twitter:image"));
   const paras = [...html.matchAll(/<p\b[^>]*>([\s\S]*?)<\/p>/gi)].map(m => stripHtml(m[1])).filter(t => t.length > 40);
-  return { image, text: paras.join("\n").slice(0, 6000) };
+  // لینک تریلر یوتیوب داخل مقاله (embed / watch / youtu.be)
+  const yt = [...html.matchAll(/(?:youtube(?:-nocookie)?\.com\/(?:embed\/|watch\?(?:[^"'<>\s]*?&(?:amp;)?)?v=|shorts\/)|youtu\.be\/)([A-Za-z0-9_-]{11})/g)]
+    .map((m) => `https://www.youtube.com/watch?v=${m[1]}`);
+  return { image, text: paras.join("\n").slice(0, 6000), videos: [...new Set(yt)].slice(0, 3) };
 }
 
 export function hashKey(s) {
