@@ -107,12 +107,20 @@ export async function geminiCaption(p, item) {
 export async function collect(p) {
   const report = { checked: 0, added: 0, errors: [] };
   for (const f of await feeds(p)) {
+    if (f.active === false) continue;                         // منبع غیرفعال
     if (report.added >= MAX_NEW_PER_RUN) break;
     let items = [];
+    const stateKey = "feedstate:" + hashKey(f.url);
     try {
       const res = await p.fetch(f.url, { headers: { "User-Agent": "Mozilla/5.0 (ARIKO news)" } });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       items = parseFeed(await res.text());
-    } catch (e) { report.errors.push(`${f.name}: ${e.message}`); continue; }
+      await p.kv.set(stateKey, { at: Date.now(), error: items.length ? "" : "هیچ خبری توی فید پیدا نشد" });
+    } catch (e) {
+      report.errors.push(`${f.name}: ${e.message}`);
+      await p.kv.set(stateKey, { at: Date.now(), error: String(e.message || e).slice(0, 180) });
+      continue;
+    }
     const first = !(await p.kv.get("feedinit:" + hashKey(f.url)));
     for (const it of items.slice(0, 15)) {
       report.checked++;

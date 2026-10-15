@@ -61,14 +61,35 @@ export async function statusText(p) {
     "\n\n✅ انتشار فقط بعد از تأیید ادمین";
 }
 
-export async function feedsView(p) {
-  const list = await feeds(p);
-  const rows = list.map((f) => [{ text: `🗑 ${f.name}`.slice(0, 60), callback_data: `fd:ask:${hashKey(f.url)}` }]);
-  rows.push([{ text: "➕ افزودن منبع", callback_data: "fd:add" }]);
-  let text = `📡 <b>منبع‌های خبری (${list.length} تا)</b>\n`;
-  for (const [i, f] of list.entries()) text += `\n${i + 1}. ${escapeHtml(f.name)}`;
-  text += "\n\nبرای حذف، روی دکمه‌ی منبع بزن.";
-  return { text: text.slice(0, 4000), reply_markup: { inline_keyboard: rows } };
+// کارت هر منبع (مثل بات قدیمی): وضعیت، نوع، لینک، آخرین بررسی + دکمه‌های حذف/غیرفعال/سایت
+function sourceClass(f) {
+  const t = (f.name || "").toLowerCase(), u = (f.url || "").toLowerCase();
+  if (t.includes("official")) return "رسمی";
+  if (t.includes("crunchyroll") || u.includes("crunchyroll")) return "رسانه رسمی/ناشر";
+  return "رسانه خبری";
+}
+
+function tehranTime(ms) {                                     // ایران از ۱۴۰۱ ساعت تابستونی نداره: UTC+3:30
+  return new Date(ms + 3.5 * 3600 * 1000).toISOString().replace("T", " ").slice(0, 19);
+}
+
+export async function feedCard(p, f, i) {
+  const h = hashKey(f.url);
+  const st = await p.kv.get("feedstate:" + h);
+  const on = f.active !== false;
+  let site = f.url;
+  try { site = new URL(f.url).origin; } catch (e) { /* */ }
+  if (/crunchyrollsvc\.com/.test(site)) site = "https://www.crunchyroll.com/news";
+  const rows = [[{ text: "🗑 حذف", callback_data: `fd:ask:${h}` },
+                 { text: on ? "⏸ غیرفعال" : "▶️ فعال", callback_data: `fd:tg:${h}` }]];
+  if (/^https?:\/\//.test(site)) rows.push([{ text: "🔗 باز کردن سایت", url: site }]);
+  return {
+    text: `${on ? "🟢" : "⚪️"} #${i + 1} — ${escapeHtml(f.name)}\n` +
+      `🏷 ${sourceClass(f)}\n${escapeHtml(f.url)}\n` +
+      `آخرین بررسی: ${st ? tehranTime(st.at) : "هنوز بررسی نشده"}` +
+      (st && st.error ? `\n⚠️ ${escapeHtml(st.error)}` : ""),
+    reply_markup: { inline_keyboard: rows },
+  };
 }
 
 export async function aiView(p) {

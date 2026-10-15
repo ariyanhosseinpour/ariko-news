@@ -2,7 +2,7 @@
 import { platform } from "../lib/platform.js";
 import { isAdmin, publish, reject, feeds, setCfg, cfg, admins } from "../lib/news.js";
 import { escapeHtml, hashKey } from "../lib/core.js";
-import { feedsView, aiView, adminsView, setWait, cancelKeyboard, WAIT_PROMPT } from "../lib/menu.js";
+import { feedCard, aiView, adminsView, setWait, cancelKeyboard, WAIT_PROMPT } from "../lib/menu.js";
 
 export default async function (q, ctx) {
   const p = platform();
@@ -33,24 +33,35 @@ export default async function (q, ctx) {
       } catch (e) { /* */ }
       return;
     }
-    case "fd": {                                             // منبع‌ها
+    case "fd": {                                             // کارت منبع‌ها
       if (action === "add") return ask("feed");
-      if (action === "back") { await answer(); return edit(await feedsView(p)); }
       const list = await feeds(p);
-      const f = list.find((x) => hashKey(x.url) === id);
-      if (!f) { await answer("این منبع دیگه نیست."); return edit(await feedsView(p)); }
+      const i = list.findIndex((x) => hashKey(x.url) === id);
+      if (i < 0) {
+        await answer("این منبع دیگه نیست.");
+        return p.api("editMessageReplyMarkup", { chat_id: chat, message_id: mid, reply_markup: { inline_keyboard: [] } }).catch(() => {});
+      }
+      const f = list[i];
       if (action === "ask") {
         await answer();
         return edit({ text: `🗑 منبع «<b>${escapeHtml(f.name)}</b>» حذف بشه؟\n${escapeHtml(f.url)}`,
                       reply_markup: { inline_keyboard: [[{ text: "✅ آره، حذف کن", callback_data: `fd:del:${id}` },
-                                                         { text: "↩️ نه", callback_data: "fd:back:0" }]] } });
+                                                         { text: "↩️ نه", callback_data: `fd:back:${id}` }]] } });
       }
       if (action === "del") {
-        await setCfg(p, "feeds", list.filter((x) => x !== f));
+        list.splice(i, 1);
+        await setCfg(p, "feeds", list);
         await answer("🗑 حذف شد");
-        return edit(await feedsView(p));
+        return edit({ text: `🗑 منبع «${escapeHtml(f.name)}» حذف شد.`, reply_markup: { inline_keyboard: [] } });
       }
-      return answer();
+      if (action === "tg") {
+        f.active = f.active === false;
+        await setCfg(p, "feeds", list);
+        await answer(f.active ? "▶️ فعال شد" : "⏸ غیرفعال شد");
+      } else {
+        await answer();
+      }
+      return edit(await feedCard(p, f, i));                   // back / toggle → کارت دوباره
     }
     case "ai": {                                             // هوش مصنوعی
       if (action === "key") return ask("key");

@@ -2,7 +2,7 @@
 import { platform } from "../lib/platform.js";
 import { isAdmin, cfg, setCfg, feeds, collect, admins, pendingNews, resendPreview, DEFAULT_FOOTER } from "../lib/news.js";
 import { escapeHtml } from "../lib/core.js";
-import { B, OLD, mainKeyboard, cancelKeyboard, statusText, feedsView, aiView, adminsView, channelView, footerView,
+import { B, OLD, mainKeyboard, cancelKeyboard, statusText, feedCard, aiView, adminsView, channelView, footerView,
          setWait, getWait, clearWait, WAIT_PROMPT } from "../lib/menu.js";
 
 const COMMANDS = { "/start": B.status, "/status": B.status, "/check": B.check, "/feeds": B.feeds,
@@ -46,7 +46,12 @@ export default async function (msg, ctx) {
       }
       return;
     }
-    case B.feeds: return send(...view(await feedsView(p)));
+    case B.feeds: {
+      const list = await feeds(p);
+      if (!list.length) return menu("هیچ منبعی ثبت نشده. از «➕ افزودن منبع خبری» اضافه کن.");
+      for (const [i, f] of list.entries()) await send(...view(await feedCard(p, f, i)));
+      return;
+    }
     case B.addFeed: return startWait("feed");
     case B.channel: return send(...view(await channelView(p)));
     case B.footer: return send(...view(await footerView(p, DEFAULT_FOOTER)));
