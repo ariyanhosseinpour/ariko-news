@@ -3,7 +3,7 @@ import { platform } from "../lib/platform.js";
 import { isAdmin, cfg, setCfg, feeds, collect, admins, pendingNews, resendPreview, DEFAULT_FOOTER, agentOnline, startRelay,
          relayActive, relayUpdate } from "../lib/news.js";
 import { escapeHtml, parseXHandle, X_PREFIX } from "../lib/core.js";
-import { B, OLD, mainKeyboard, cancelKeyboard, statusText, feedCard, aiView, adminsView, channelView, footerView, rankView, importanceView,
+import { B, OLD, mainKeyboard, cancelKeyboard, statusText, feedCard, aiView, adminsView, channelView, footerView, rankView, importanceView, reportText,
          setWait, getWait, clearWait, WAIT_PROMPT } from "../lib/menu.js";
 
 const KNOWN_COMMANDS = ["/setgemini", "/setchannel", "/footer", "/addfeed", "/addadmin", "/setmodel", "/importfeeds"];
@@ -72,6 +72,7 @@ export default async function (msg, ctx) {
     case B.ai: return send(...view(await aiView(p)));
     case B.admins: return send(...view(await adminsView(p)));
     case B.rank: return send(...view(rankView()));
+    case B.report: return menu(await reportText(p));
     case B.importance: return send(...view(await importanceView(p)));
   }
 

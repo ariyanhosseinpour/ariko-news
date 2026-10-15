@@ -1,5 +1,5 @@
 // منوی دکمه‌ای بات (مثل بات قدیمی): کیبورد پایین صفحه + دکمه‌های شیشه‌ای.
-import { cfg, feeds, admins, pendingNews, OWNER_ID, RANK_SOURCES } from "./news.js";
+import { cfg, feeds, admins, pendingNews, OWNER_ID, RANK_SOURCES, recentDecisions } from "./news.js";
 import { escapeHtml, hashKey, isXFeed, xHandle, IMPORTANCE_LEVELS, DEFAULT_MIN_IMPORTANCE } from "./core.js";
 
 export const B = {
@@ -14,6 +14,7 @@ export const B = {
   admins: "👤 ادمین‌ها",
   rank: "🧪 تست رنکینگ هفتگی",
   importance: "⭐️ فیلتر اهمیت خبر",
+  report: "🧾 گزارش خبرها",
   cancel: "❌ لغو",
 };
 
@@ -21,7 +22,7 @@ export const B = {
 export const OLD = {
   "📰 بررسی News V2 الان": B.check,
   "📥 صف بررسی News V2": B.queue,
-  "📊 آمار News V2": B.status,
+  "📊 آمار News V2": B.report,
   "🩺 وضعیت بات": B.status,
   "🤖 وضعیت ایجنت خبر": B.status,
   "📡 منابع News V2": B.feeds,
@@ -38,7 +39,7 @@ export function mainKeyboard() {
   return {
     keyboard: [
       [{ text: B.check }],
-      [{ text: B.queue }, { text: B.status }],
+      [{ text: B.queue }, { text: B.report }, { text: B.status }],
       [{ text: B.feeds }, { text: B.addFeed }],
       [{ text: B.channel }, { text: B.footer }],
       [{ text: B.ai }, { text: B.admins }],
@@ -172,4 +173,21 @@ export async function importanceView(p) {
     reply_markup: { inline_keyboard: IMPORTANCE_LEVELS.map(([v, label]) =>
       [{ text: `${v === cur ? "✅ " : ""}${label} (${v}+)`, callback_data: `im:${v}` }]) },
   };
+}
+
+function ago(ms) {
+  const m = Math.round((Date.now() - ms) / 60000);
+  return m < 60 ? `${m} دقیقه پیش` : m < 1440 ? `${Math.round(m / 60)} ساعت پیش` : `${Math.round(m / 1440)} روز پیش`;
+}
+
+export async function reportText(p) {
+  const list = await recentDecisions(p);
+  if (!list.length) return "🧾 هنوز خبر تازه‌ای بررسی نشده (از این به بعد سرنوشت هر خبر اینجا نوشته میشه).";
+  let out = "🧾 <b>سرنوشت خبرهای تازه</b> (جدیدترین بالا)\n";
+  for (const d of list.slice(0, 20)) {
+    const line = `\n${d.outcome} · ${escapeHtml(d.src)} · ${ago(d.at)}\n<a href="${escapeHtml(d.link)}">${escapeHtml(d.title)}</a>\n`;
+    if (out.length + line.length > 3900) break;
+    out += line;
+  }
+  return out;
 }

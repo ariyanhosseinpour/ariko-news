@@ -134,7 +134,7 @@ export async function collect(p, pre = null) {
       if (!first && report.added >= MAX_NEW_PER_RUN) break;  // بقیه برای چک بعدی می‌مونن (گم نمی‌شن)
       await p.kv.set(seenKey, 1);
       if (first) continue;                                    // بار اول فقط علامت‌گذاری (سیل خبرهای قدیمی نیاد)
-      if (it.leak && !it.image) continue;                     // پست X بدون عکس: کامپیوتر هم عکسی براش پیدا نمی‌کنه
+      if (it.leak && !it.image) { await logDecision(p, f, it, null, "🖼 پست X بدون عکس"); continue; }
       const official = /official/i.test(f.name) || /crunchyroll/i.test(f.name + f.url);
       let imp = importance(it, official);
       if (imp.score < minImp && imp.score + 20 >= minImp) {   // فقط وقتی محبوبیت می‌تونه نتیجه رو عوض کنه، AniList رو بپرس
@@ -144,12 +144,18 @@ export async function collect(p, pre = null) {
         if (meta) imp = importance(it, official, meta);
       }
       it.importance = imp.score;
-      if (it.importance < minImp) { report.low++; continue; }  // فیلتر اهمیت خبر (قبل از Gemini؛ سهمیه هدر نمیره)
+      if (it.importance < minImp) {                           // فیلتر اهمیت خبر (قبل از Gemini؛ سهمیه هدر نمیره)
+        report.low++;
+        await logDecision(p, f, it, imp, `⭐️ کم‌اهمیت (${imp.score} < ${minImp})`);
+        continue;
+      }
       try {
         await addNews(p, f, it);
         report.added++;
+        await logDecision(p, f, it, imp, "✅ فرستاده شد");
       } catch (e) {
         report.errors.push(`${it.title.slice(0, 40)}: ${e.message}`);
+        await logDecision(p, f, it, imp, `⚠️ خطا: ${String(e.message || e).slice(0, 80)}`);
         const tries = Number((await p.kv.get("retry:" + hashKey(it.link))) || 0) + 1;   // مثلاً Gemini موقتاً جواب نداد
         await p.kv.set("retry:" + hashKey(it.link), tries);
         if (tries < 4) await p.kv.del(seenKey);                // تا ۳ بار دیگه توی چک‌های بعدی دوباره امتحان میشه
@@ -159,6 +165,33 @@ export async function collect(p, pre = null) {
   }
   await setCfg(p, "last_collect", { at: Date.now(), ...report });
   return report;
+}
+
+// ───────── گزارش: سرنوشت ۳۰ خبر آخر (چرا اومد/نیومد) ─────────
+async function logDecision(p, f, it, imp, outcome) {
+  const list = (await p.kv.get("decisions")) || [];
+  list.unshift({ at: Date.now(), src: f.name, title: String(it.title || "").slice(0, 120), link: it.link,
+                 score: imp ? imp.score : null, why: imp ? imp.reasons.join("، ") : "", outcome });
+  await p.kv.set("decisions", list.slice(0, 30));
+}
+export const recentDecisions = async (p) => (await p.kv.get("decisions")) || [];
+
+/** عیب‌یابی: خبرهای الان هر فید، دیده‌شده یا نه، و امتیازشون (بدون تغییر چیزی) */
+export async function diagnose(p, pre = null) {
+  const out = [];
+  const minImp = Number(await cfg(p, "min_importance", DEFAULT_MIN_IMPORTANCE));
+  for (const f of await feeds(p)) {
+    if (f.active === false) continue;
+    let items = [];
+    try { items = await fetchItems(p, f, pre); } catch (e) { out.push({ src: f.name, error: e.message }); continue; }
+    for (const it of items.slice(0, 8)) {
+      const official = /official/i.test(f.name) || /crunchyroll/i.test(f.name + f.url);
+      const imp = importance(it, official);
+      out.push({ src: f.name, title: it.title.slice(0, 90), seen: !!(await p.kv.get("seen:" + hashKey(it.link))),
+                 score: imp.score, pass: imp.score >= minImp, published: it.published || "" });
+    }
+  }
+  return { minImp, init: true, items: out };
 }
 
 // ───────── محبوبیت انیمه از AniList (کش ۷ روزه) ─────────

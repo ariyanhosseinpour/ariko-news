@@ -7,6 +7,10 @@ on:
         description: "اکانت‌های X رو همین الان هم چک کن (بدون صبر)"
         type: boolean
         default: true
+      diagnose:
+        description: "فقط گزارش (خبرهای الان هر فید و امتیازشون؛ چیزی تغییر نمی‌کنه)"
+        type: boolean
+        default: false
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -20,4 +24,4 @@ jobs:
         env:
           TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_TOKEN }}
           X_AUTH_TOKEN: ${{ secrets.X_AUTH_TOKEN }}
-        run: python serverless_agent.py --tick ${{ inputs.force && '--force' || '' }}
+        run: python serverless_agent.py ${{ inputs.diagnose && '--diagnose' || '--tick' }} ${{ inputs.force && '--force' || '' }}
