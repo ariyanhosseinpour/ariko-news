@@ -64,12 +64,13 @@ def log(text):
 # ماژول کوچیکی که فقط موقع اجرا فرستاده میشه (deploy نمیشه) و توابع lib/news.js رو صدا می‌زنه
 PC_MODULE = """
 import { platform } from '../lib/platform.js';
-import { agentPoll, agentDone, collect, agentUpdates, prefetchPlan, diagnose, recoverLost } from '../lib/news.js';
+import { agentPoll, agentDone, collect, agentUpdates, prefetchPlan, diagnose, recoverLost, clearImageJobs } from '../lib/news.js';
 export default async function (input) {
   const p = platform();
   if (input.op === 'poll') return { jobs: await agentPoll(p), updates: await agentUpdates(p) };
   if (input.op === 'done') return await agentDone(p, input.result || {});
   if (input.op === 'collect') return await collect(p, input.prefetched || null);
+  if (input.op === 'clearjobs') return await clearImageJobs(p);
   if (input.op === 'recover') return await recoverLost(p, input.prefetched || null);
   if (input.op === 'diagnose') return await diagnose(p, input.prefetched || null);
   if (input.op === 'plan') return { urls: await prefetchPlan(p, !!input.force) };
@@ -339,6 +340,9 @@ def relay(updates):
 def main():
     if not TG_CLOUD or ":" not in TG_CLOUD:
         sys.exit("TGCLOUD_TOKEN رو توی .env بذار (BotFather → Serverless → CLI Access → Access token).")
+    if "--clear-jobs" in sys.argv:
+        log(f"🧹 پاک شد: {cloud('clearjobs').get('gone')}")
+        return
     if "--recover" in sys.argv:                                  # خبرهای مهمِ گم‌شده دوباره توی صف چک
         r = cloud("recover", prefetched=prefetch())
         log(f"♻️ {len(r.get('recovered') or [])} خبر برگشت:")

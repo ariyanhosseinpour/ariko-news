@@ -303,6 +303,15 @@ export async function recoverLost(p, pre = null, maxAgeDays = 3) {
   return { recovered };
 }
 
+/** کارهای عکسِ گیرکرده (که کامپیوتر نمی‌تونه درستشون کنه) رو پاک کن */
+export async function clearImageJobs(p) {
+  const gone = [];
+  for (const { key, value: job } of await p.kv.list("job:")) {
+    if (job && job.type !== "rank" && job.type !== "insta") { await p.kv.del(key); gone.push(job.news_id || key); }
+  }
+  return { gone };
+}
+
 // ───────── محبوبیت انیمه از AniList (کش ۷ روزه) ─────────
 const ANILIST_QUERY = `query ($s: String) { Media(search: $s, type: ANIME, sort: SEARCH_MATCH) {
   title { romaji english } synonyms popularity startDate { year } genres description(asHtml: false)

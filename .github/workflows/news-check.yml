@@ -7,6 +7,10 @@ on:
         description: "اکانت‌های X رو همین الان هم چک کن (بدون صبر)"
         type: boolean
         default: true
+      clear_jobs:
+        description: "کارهای عکسِ گیرکرده رو پاک کن"
+        type: boolean
+        default: false
       recover:
         description: "خبرهای مهم ۳ روز اخیر که ساخته نشدن رو برگردون"
         type: boolean
@@ -28,4 +32,4 @@ jobs:
         env:
           TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_TOKEN }}
           X_AUTH_TOKEN: ${{ secrets.X_AUTH_TOKEN }}
-        run: python serverless_agent.py ${{ inputs.recover && '--recover' || (inputs.diagnose && '--diagnose' || '--tick') }} ${{ inputs.force && '--force' || '' }}
+        run: python serverless_agent.py ${{ inputs.clear_jobs && '--clear-jobs' || '' }} ${{ inputs.recover && '--recover' || (inputs.diagnose && '--diagnose' || '--tick') }} ${{ inputs.force && '--force' || '' }}
