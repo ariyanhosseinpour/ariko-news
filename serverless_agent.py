@@ -71,6 +71,18 @@ export default async function (input) {
   if (input.op === 'poll') return { jobs: await agentPoll(p), updates: await agentUpdates(p) };
   if (input.op === 'done') return await agentDone(p, input.result || {});
   if (input.op === 'collect') return await collect(p, input.prefetched || null);
+  if (input.op === 'dbg2') {
+    const db = (await import('sdk/db')).default; const { like, eq, sql } = await import('sdk/db'); const { kv } = await import('../schema.js');
+    const out = {}; const t = async (name, f) => { try { const r = await f(); out[name] = JSON.stringify(r).slice(0, 200); } catch (e) { out[name] = 'ERR ' + e.message; } };
+    await t('get', () => p.kv.get('cfg:channel'));
+    await t('set', () => p.kv.set('cfg:dbgtest', Date.now()));
+    await t('limit5', () => db.select().from(kv).where(like(kv.key, 'cfg:%')).limit(5).all());
+    await t('count', () => db.select({ n: sql`count(*)` }).from(kv).all());
+    await t('countlike', () => db.select({ n: sql`count(*)` }).from(kv).where(like(kv.key, 'news:%')).all());
+    await t('keysonly', () => db.select({ k: kv.key }).from(kv).where(like(kv.key, 'job:%')).all());
+    await t('size', () => db.select({ n: sql`sum(length(value))` }).from(kv).all());
+    return out;
+  }
   if (input.op === 'dbg') { const out = {}; for (const pre of ['news:', 'job:', 'cfg:', 'feedstate:']) { try { const r = await p.kv.list(pre); out[pre] = r.length + ' rows, ' + JSON.stringify(r).length + ' bytes'; } catch (e) { out[pre] = 'ERR ' + e.message; } } return out; }
   if (input.op === 'parse') { const a = parseArticle(input.html || ''); return { images: a.images, videos: a.videos, image: a.image }; }
   if (input.op === 'redo') return await redoNews(p, input.words || []);
@@ -430,6 +442,7 @@ def main():
         sys.exit("TGCLOUD_TOKEN رو توی .env بذار (BotFather → Serverless → CLI Access → Access token).")
     if "--dbg" in sys.argv:
         log(json.dumps(cloud("dbg"), ensure_ascii=False))
+        log(json.dumps(cloud("dbg2"), ensure_ascii=False))
         return
     if "--probe" in sys.argv:                                    # عیب‌یابی: یه صفحه‌ی خبر چه ویدیو/عکسی داره
         url = sys.argv[sys.argv.index("--probe") + 1]
