@@ -84,9 +84,15 @@ export function articleImages(html) {
     if (!/^https?:\/\//.test(src) || /\.(?:svg|gif)(?:\?|$)/i.test(src) || BAD_IMG.test(src)) continue;
     if ((w && w < 300) || (h && h < 300)) continue;
     if (!out.includes(src)) out.push(src);
-    if (out.length >= 10) break;
+    if (out.length >= 12) break;
   }
-  return out;
+  // عکس‌های قدیمیِ «خبرهای مرتبط» که لای مقاله اومدن: اگه بیشترِ عکس‌ها از یه ماه هستن، بقیه حذف
+  const month = (u) => (u.match(/\/(20\d\d)\/(\d\d)\//) || []).slice(1).join("-");
+  const counts = {};
+  for (const u of out) if (month(u)) counts[month(u)] = (counts[month(u)] || 0) + 1;
+  const top = Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
+  const kept = top && top[1] >= 2 ? out.filter((u) => !month(u) || month(u) === top[0]) : out;
+  return kept.slice(0, 10);
 }
 
 export function hashKey(s) {
