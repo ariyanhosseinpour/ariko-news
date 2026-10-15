@@ -2,6 +2,11 @@ name: news-check
 # یه بار چک دستی خبرها (برای عیب‌یابی؛ لاگش فوری دیده میشه). چک دائمی کار news-tick هست.
 on:
   workflow_dispatch:
+    inputs:
+      force:
+        description: "اکانت‌های X رو همین الان هم چک کن (بدون صبر)"
+        type: boolean
+        default: true
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -15,4 +20,4 @@ jobs:
         env:
           TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_TOKEN }}
           X_AUTH_TOKEN: ${{ secrets.X_AUTH_TOKEN }}
-        run: python serverless_agent.py --tick
+        run: python serverless_agent.py --tick ${{ inputs.force && '--force' || '' }}

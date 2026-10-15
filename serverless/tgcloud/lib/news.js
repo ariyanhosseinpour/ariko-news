@@ -113,7 +113,8 @@ export async function collect(p, pre = null) {
     let items = [];
     const stateKey = "feedstate:" + hashKey(f.url);
     const prev = await p.kv.get(stateKey);
-    if (isXFeed(f) && prev && Date.now() - prev.at < (prev.wait || X_EVERY_MS)) continue;   // X رو کمتر بپرس که محدود نکنه
+    const preHit = pre && isXFeed(f) && pre[xUrl(xHandle(f))];
+    if (isXFeed(f) && !preHit && prev && Date.now() - prev.at < (prev.wait || X_EVERY_MS)) continue;   // X رو کمتر بپرس که محدود نکنه
     try {
       items = await fetchItems(p, f, pre);
       const via = pre && (pre[f.url] || (isXFeed(f) && pre[xUrl(xHandle(f))])) ? "pre" : "";
@@ -236,13 +237,13 @@ async function fetchItems(p, f, pre) {
 }
 
 /** لیست آدرس‌هایی که گیت‌هاب/کامپیوتر باید قبل از collect بگیره: اکانت‌های X + فیدهایی که سرور بهشون دسترسی نداره */
-export async function prefetchPlan(p) {
+export async function prefetchPlan(p, force = false) {
   const out = [];
   for (const f of await feeds(p)) {
     if (f.active === false) continue;
     const st = await p.kv.get("feedstate:" + hashKey(f.url));
     if (isXFeed(f)) {
-      if (st && Date.now() - st.at < (st.wait || X_EVERY_MS)) continue;
+      if (!force && st && Date.now() - st.at < (st.wait || X_EVERY_MS)) continue;
       out.push({ url: xUrl(xHandle(f)), x: true });
     } else if (st && ((st.error && /request failed|fetch|HTTP (?:403|429|5\d\d)/i.test(st.error)) || st.via === "pre")) {
       out.push({ url: f.url });

@@ -70,13 +70,60 @@ export default async function (input) {
   if (input.op === 'poll') return { jobs: await agentPoll(p), updates: await agentUpdates(p) };
   if (input.op === 'done') return await agentDone(p, input.result || {});
   if (input.op === 'collect') return await collect(p, input.prefetched || null);
-  if (input.op === 'plan') return { urls: await prefetchPlan(p) };
+  if (input.op === 'plan') return { urls: await prefetchPlan(p, !!input.force) };
   return { error: 'unknown op' };
 }
 """
 
 
+REPO_ZIP = "https://codeload.github.com/ariyanhosseinpour/ariko-news/zip/refs/heads/main"
+AUTO_UPDATE = os.environ.get("AGENT_AUTO_UPDATE", "1") != "0" and not os.environ.get("GITHUB_ACTIONS")
+_remote = {"at": 0, "files": None}
+
+
+def _remote_files():
+    """آخرین نسخه‌ی کد از گیت‌هاب (هر ۱۰ دقیقه)، که برنامه‌ی کامپیوتر هیچ‌وقت با کد قدیمی کار نکنه."""
+    if not AUTO_UPDATE:
+        return None
+    if _remote["files"] is not None and time.time() - _remote["at"] < 600:
+        return _remote["files"]
+    _remote["at"] = time.time()
+    try:
+        import zipfile
+        with urllib.request.urlopen(urllib.request.Request(REPO_ZIP, headers={"User-Agent": "ariko-agent"}), timeout=30) as r:
+            z = zipfile.ZipFile(io.BytesIO(r.read()))
+        files = {}
+        for name in z.namelist():
+            rel = name.split("/", 1)[1] if "/" in name else ""
+            if rel == "serverless_agent.py" or (rel.startswith("serverless/tgcloud/") and rel.endswith(".js")):
+                files[rel] = z.read(name).decode("utf-8")
+        if any(k.startswith("serverless/tgcloud/") for k in files):
+            _remote["files"] = files
+            _self_update(files.get("serverless_agent.py"))
+    except Exception as exc:
+        log(f"⚠️ گرفتن کد جدید از گیت‌هاب نشد (با کد خود کامپیوتر ادامه میده): {exc}")
+    return _remote["files"]
+
+
+def _self_update(code):
+    me = os.path.abspath(__file__)
+    if not code:
+        return
+    with open(me, encoding="utf-8") as fh:
+        if fh.read().replace("\r\n", "\n") == code.replace("\r\n", "\n"):
+            return
+    with open(me, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(code)
+    log("🔄 برنامه آپدیت شد؛ اجرای دوباره…")
+    os.execv(sys.executable, [sys.executable, me] + sys.argv[1:])
+
+
 def _sources():
+    remote = _remote_files()
+    if remote:
+        out = {k[len("serverless/tgcloud/"):-3]: v for k, v in remote.items() if k.startswith("serverless/tgcloud/")}
+        out["endpoints/pc_agent"] = PC_MODULE
+        return out
     root = os.path.join(PROJECT, "tgcloud")
     if not os.path.isdir(root):
         sys.exit(f"پوشه‌ی پروژه پیدا نشد: {root} (TGCLOUD_PROJECT رو درست کن)")
@@ -117,7 +164,7 @@ X_AUTH_TOKEN = os.environ.get("X_AUTH_TOKEN", "").strip()   # کوکی لاگی�
 def prefetch():
     """صفحه‌هایی که سرور تلگرام بهشون دسترسی نداره (X، سایت‌هایی که بلاکش کردن) اینجا گرفته میشن."""
     out = {}
-    for item in cloud("plan").get("urls") or []:
+    for item in cloud("plan", force="--force" in sys.argv).get("urls") or []:
         url = item["url"]
         headers = {"User-Agent": BROWSER_UA, "Accept-Language": "en-US,en;q=0.9",
                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"}
