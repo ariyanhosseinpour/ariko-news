@@ -230,14 +230,56 @@ async function addNews(p, feed, it) {
   const { caption, model } = await geminiCaption(p, item);
   const id = hashKey(it.link + Date.now());
   const news = { id, title: it.title, link: it.link, source: feed.name, image: article.image || it.image || "",
-                 caption, model, status: "pending", file_id: "", created: Date.now(), importance: it.importance };
+                 caption, model, status: "pending", file_id: "", created: Date.now(), importance: it.importance,
+                 summary: String(it.summary || "").slice(0, 1500) };
   await p.kv.set("news:" + id, news);
   await preview(p, news);
 }
 
 function reviewKeyboard(id) {
   return { inline_keyboard: [[{ text: "✅ انتشار", callback_data: `nw:ok:${id}` },
-                              { text: "❌ رد", callback_data: `nw:no:${id}` }]] };
+                              { text: "❌ رد", callback_data: `nw:no:${id}` }],
+                             [{ text: "🎨 پست اینستاگرام", callback_data: `ig0:${id}` }]] };
+}
+
+// ───────── پست اینستاگرام (کاور + فتوشاپ): کل کار با کد بات قدیمی روی کامپیوتر انجام میشه ─────────
+// سرور فقط کار رو به کامپیوتر میده و تا ۳ ساعت دکمه‌ها/پیام‌های مربوط به اون (ig:… ، عکس/PSD ، تیتر) رو
+// دست‌نخورده برای کامپیوتر می‌فرسته تا همون منوی قدیمی کار کنه.
+export const RELAY_PREFIXES = ["ig", "igup", "igps", "nv2_insta"];
+const RELAY_MS = 3 * 3600 * 1000;
+
+export async function agentOnline(p) {
+  return Date.now() - ((await cfg(p, "agent_seen", 0)) || 0) < 90000;
+}
+
+export async function instaJob(p, newsId, uid) {
+  const news = await p.kv.get("news:" + newsId);
+  if (!news) return { ok: false, text: "این خبر پیدا نشد" };
+  const job = { id: "i" + newsId + uid, type: "insta", uid, created: Date.now(), taken: 0,
+                news: { id: news.id, title: news.title, link: news.link, caption: news.caption, image: news.image,
+                        file_id: news.file_id, source: news.source, summary: news.summary || "", anime: "" } };
+  const guess = guessAnimeName(news.title);
+  const meta = guess ? await anilistMeta(p, guess) : null;
+  job.news.anime = (meta && meta.title) || guess;
+  await p.kv.set("job:" + job.id, job);
+  await startRelay(p, uid);
+  return { ok: true, online: await agentOnline(p) };
+}
+
+export const startRelay = (p, uid) => p.kv.set("relay:" + uid, Date.now() + RELAY_MS);
+export async function relayActive(p, uid) {
+  return Number((await p.kv.get("relay:" + uid)) || 0) > Date.now();
+}
+
+export async function relayUpdate(p, update) {
+  const key = `upd:${String(Date.now()).padStart(14, "0")}:${Math.random().toString(36).slice(2, 8)}`;
+  await p.kv.set(key, update);
+}
+
+export async function agentUpdates(p) {
+  const rows = (await p.kv.list("upd:")).sort((a, b) => (a.key < b.key ? -1 : 1));
+  for (const r of rows) await p.kv.del(r.key);
+  return rows.map((r) => r.value).filter(Boolean);
 }
 
 function previewText(p, news) {
@@ -359,6 +401,14 @@ export async function agentPoll(p) {
 export async function agentDone(p, { job_id, ok, file_id, error }) {
   const job = await p.kv.get("job:" + job_id);
   if (!job) return { ok: true };
+  if (job.type === "insta") {                                // کاور اینستاگرام: بقیه‌ی کار با منوی بات قدیمی روی کامپیوتره
+    await p.kv.del("job:" + job_id);
+    if (!ok) {
+      try { await p.api("sendMessage", { chat_id: job.uid, parse_mode: "HTML",
+        text: `⚠️ شروع ساخت پست اینستاگرام نشد:\n${escapeHtml(String(error || "").slice(0, 300))}` }); } catch (e) { /* */ }
+    }
+    return { ok: true };
+  }
   if (job.type === "rank") {                                  // کارت رنکینگ: کامپیوتر خودش عکس رو فرستاده
     await p.kv.del("job:" + job_id);
     if (!ok) {

@@ -64,10 +64,10 @@ def log(text):
 # ماژول کوچیکی که فقط موقع اجرا فرستاده میشه (deploy نمیشه) و توابع lib/news.js رو صدا می‌زنه
 PC_MODULE = """
 import { platform } from '../lib/platform.js';
-import { agentPoll, agentDone, collect } from '../lib/news.js';
+import { agentPoll, agentDone, collect, agentUpdates } from '../lib/news.js';
 export default async function (input) {
   const p = platform();
-  if (input.op === 'poll') return { jobs: await agentPoll(p) };
+  if (input.op === 'poll') return { jobs: await agentPoll(p), updates: await agentUpdates(p) };
   if (input.op === 'done') return await agentDone(p, input.result || {});
   if (input.op === 'collect') return await collect(p);
   return { error: 'unknown op' };
@@ -185,19 +185,62 @@ def handle(job):
 _old_bot = None
 
 
-def handle_rank(job):
-    """کارت رنکینگ هفتگی رو با همون کد بات قدیمی (news.py کنار همین فایل) می‌سازه و می‌فرسته."""
+def old_bot():
+    """کد بات قدیمی (news.py کنار همین فایل) فقط به‌عنوان کتابخونه؛ خود بات قدیمی اجرا (polling) نمیشه."""
     global _old_bot
     if _old_bot is None:
         if not os.path.exists(os.path.join(BASE_DIR, "news.py")):
-            raise RuntimeError("news.py (بات قدیمی) کنار serverless_agent.py نیست؛ کارت رنکینگ با کد اون ساخته میشه.")
+            raise RuntimeError("news.py (بات قدیمی) کنار serverless_agent.py نیست؛ این کار با کد اون انجام میشه.")
         sys.path.insert(0, BASE_DIR)
-        import news as _old_bot                                   # فقط توابع؛ بات قدیمی اجرا نمیشه
-    path, caption, _label = _old_bot._weekly_test_build(job["source"])
+        import news as mod
+        mod.init_db()
+        mod._news_v2_init_db()
+        _old_bot = mod
+    return _old_bot
+
+
+def handle_rank(job):
+    """کارت رنکینگ هفتگی رو با همون کد بات قدیمی می‌سازه و می‌فرسته."""
+    path, caption, _label = old_bot()._weekly_test_build(job["source"])
     with open(path, "rb") as fh:
         raw = fh.read()
     caption = caption.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     return _send_photo(job["chat_id"], _fix_image(raw), caption, None)
+
+
+def handle_insta(job):
+    """خبر سرور → یه ردیف توی دیتابیس بات قدیمی، بعد همون «🎨 پست اینستاگرام» قدیمی (کاور + فتوشاپ) شروع میشه.
+    بقیه‌ی کار (دکمه‌ها، آپلود عکس/PSD، تیتر) با آپدیت‌هایی که سرور می‌فرسته توسط همون کد قدیمی انجام میشه."""
+    mod = old_bot()
+    n = job["news"]
+    guid = "srv:" + str(n["id"])
+    facts = {"anime_eng_name": n.get("anime") or "", "archive_photo_file_id": n.get("file_id") or ""}
+    event = mod._news_v2_event_type(n.get("title") or "", n.get("summary") or "")
+    with mod.db_write_lock:
+        conn = mod.db()
+        row = conn.execute("SELECT id FROM news_v2_items WHERE source_id=0 AND guid=?", (guid,)).fetchone()
+        if row:
+            item_id = row["id"]
+        else:
+            cur = conn.execute(
+                "INSERT INTO news_v2_items(source_id, guid, title, url, summary, article_text, image_url, event_type,"
+                " anime_eng_name, anime_display, facts_json, caption, status) VALUES(0,?,?,?,?,?,?,?,?,?,?,?,'archived')",
+                (guid, n.get("title") or "", n.get("link") or "", n.get("summary") or "", n.get("summary") or "",
+                 n.get("image") or "", event, facts["anime_eng_name"], facts["anime_eng_name"],
+                 json.dumps(facts, ensure_ascii=False), n.get("caption") or ""))
+            item_id = cur.lastrowid
+            conn.commit()
+        conn.close()
+    import threading
+    threading.Thread(target=mod._insta_start_safe, args=(item_id, int(job["uid"])), daemon=True).start()
+    return ""
+
+
+def relay(updates):
+    """دکمه‌ها/پیام‌هایی که سرور برای منوی قدیمی فرستاده → همون handlerهای بات قدیمی."""
+    mod = old_bot()
+    from telebot import types
+    mod.bot.process_new_updates([types.Update.de_json(u) for u in updates])
 
 
 def main():
@@ -211,6 +254,7 @@ def main():
         sys.exit("NEWS_BOT_TOKEN رو توی .env بذار.")
     log("✅ برنامه‌ی کامپیوتر بات خبری روشنه (Ctrl+C برای بستن)")
     last_collect = 0
+    busy_until = 0
     while True:
         try:
             if time.time() - last_collect > 300:                 # چک خبرها (اگه Serverless خودش زمان‌بندی نداشت)
@@ -218,12 +262,22 @@ def main():
                 r = cloud("collect")
                 if r.get("added"):
                     log(f"📰 {r['added']} خبر جدید")
-            for job in cloud("poll").get("jobs") or []:
-                is_rank = job.get("type") == "rank"
-                log(f"📊 ساخت کارت رنکینگ {job.get('source')} …" if is_rank
-                    else f"🖼 درست کردن عکس خبر {job.get('news_id')} …")
+            polled = cloud("poll")
+            if polled.get("updates"):
+                busy_until = time.time() + 15 * 60
                 try:
-                    fid = handle_rank(job) if is_rank else handle(job)
+                    relay(polled["updates"])
+                except Exception as exc:
+                    log(f"⚠️ منوی اینستاگرام: {exc}")
+            for job in polled.get("jobs") or []:
+                kind = job.get("type")
+                log({"rank": f"📊 ساخت کارت رنکینگ {job.get('source')} …",
+                     "insta": f"🎨 پست اینستاگرام: {str(job.get('news', {}).get('title', ''))[:60]} …"}.get(
+                    kind, f"🖼 درست کردن عکس خبر {job.get('news_id')} …"))
+                if kind == "insta":
+                    busy_until = time.time() + 15 * 60
+                try:
+                    fid = {"rank": handle_rank, "insta": handle_insta}.get(kind, handle)(job)
                     cloud("done", result={"job_id": job["id"], "ok": True, "file_id": fid})
                     log("   ✅ فرستاده شد")
                 except Exception as exc:
@@ -233,7 +287,7 @@ def main():
             raise
         except Exception:
             log("⚠️ " + traceback.format_exc(limit=1).strip().splitlines()[-1])
-        time.sleep(20)
+        time.sleep(2 if time.time() < busy_until else 20)       # وسط کار اینستاگرام: دکمه‌ها سریع جواب بدن
 
 
 if __name__ == "__main__":

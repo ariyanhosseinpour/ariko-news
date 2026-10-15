@@ -1,6 +1,6 @@
 // دکمه‌های شیشه‌ای: «✅ انتشار / ❌ رد» زیر خبر، و دکمه‌های منو (منبع‌ها، هوش مصنوعی، ادمین‌ها، …).
 import { platform } from "../lib/platform.js";
-import { isAdmin, publish, reject, feeds, setCfg, cfg, admins, rankJob, RANK_SOURCES } from "../lib/news.js";
+import { isAdmin, publish, reject, feeds, setCfg, cfg, admins, rankJob, RANK_SOURCES, instaJob, agentOnline, relayActive, relayUpdate, RELAY_PREFIXES } from "../lib/news.js";
 import { escapeHtml, hashKey } from "../lib/core.js";
 import { importanceView, feedCard, aiView, adminsView, setWait, cancelKeyboard, WAIT_PROMPT } from "../lib/menu.js";
 
@@ -11,6 +11,12 @@ export default async function (q, ctx) {
   const answer = (text = "", alert = false) =>
     p.api("answerCallbackQuery", { callback_query_id: q.id, text, show_alert: alert }).catch(() => {});
   if (!(await isAdmin(p, q.from.id))) return answer("دسترسی ندارید.", true);
+
+  // دکمه‌های منوی اینستاگرام/فتوشاپ بات قدیمی → دست‌نخورده برای کامپیوتر (خودش جواب میده)
+  if (RELAY_PREFIXES.includes(kind)) {
+    if (!(await agentOnline(p))) return answer("🖥 سیستم خاموشه؛ برنامه‌ی serverless_agent رو روشن کن.", true);
+    return relayUpdate(p, (ctx && ctx.update) || { update_id: 0, callback_query: q });
+  }
   const chat = q.message && q.message.chat.id;
   const mid = q.message && q.message.message_id;
   const edit = (v) => p.api("editMessageText", { chat_id: chat, message_id: mid, text: v.text, parse_mode: "HTML",
@@ -27,10 +33,22 @@ export default async function (q, ctx) {
       if (action === "x") return answer();
       const result = action === "ok" ? await publish(p, id) : await reject(p, id);
       await answer(result);
-      try {                                                   // دکمه‌ها برداشته میشن که دوبار زده نشه
+      try {                                                   // دکمه‌ها برداشته میشن که دوبار زده نشه (اینستاگرام می‌مونه)
         await p.api("editMessageReplyMarkup", { chat_id: chat, message_id: mid,
-          reply_markup: { inline_keyboard: [[{ text: result, callback_data: "nw:x:0" }]] } });
+          reply_markup: { inline_keyboard: [[{ text: result, callback_data: "nw:x:0" }],
+                                            [{ text: "🎨 پست اینستاگرام", callback_data: `ig0:${id}` }]] } });
       } catch (e) { /* */ }
+      return;
+    }
+    case "ig0": {                                            // شروع پست اینستاگرام → کامپیوتر
+      const r = await instaJob(p, action, q.from.id);
+      if (!r.ok) return answer(r.text, true);
+      await answer(r.online ? "🎨 کاور توی خصوصی ساخته میشه…" : "🖥 سیستم رو روشن کن", !r.online);
+      if (!r.online) {
+        await p.api("sendMessage", { chat_id: q.from.id, parse_mode: "HTML",
+          text: "🎨 پست اینستاگرام با فتوشاپ روی کامپیوتر ساخته میشه.\n🖥 <b>سیستم رو روشن کن</b> (serverless_agent)؛ " +
+                "به محض روشن شدن شروع می‌کنه." }).catch(() => {});
+      }
       return;
     }
     case "fd": {                                             // کارت منبع‌ها

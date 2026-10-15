@@ -1,10 +1,12 @@
 // پیام‌های ادمین: منوی دکمه‌ای (مثل بات قدیمی). دستورهای / هم هنوز کار می‌کنن.
 import { platform } from "../lib/platform.js";
-import { isAdmin, cfg, setCfg, feeds, collect, admins, pendingNews, resendPreview, DEFAULT_FOOTER } from "../lib/news.js";
+import { isAdmin, cfg, setCfg, feeds, collect, admins, pendingNews, resendPreview, DEFAULT_FOOTER, agentOnline, startRelay,
+         relayActive, relayUpdate } from "../lib/news.js";
 import { escapeHtml, parseXHandle, X_PREFIX } from "../lib/core.js";
 import { B, OLD, mainKeyboard, cancelKeyboard, statusText, feedCard, aiView, adminsView, channelView, footerView, rankView, importanceView,
          setWait, getWait, clearWait, WAIT_PROMPT } from "../lib/menu.js";
 
+const KNOWN_COMMANDS = ["/setgemini", "/setchannel", "/footer", "/addfeed", "/addadmin", "/setmodel", "/importfeeds"];
 const COMMANDS = { "/start": B.status, "/status": B.status, "/check": B.check, "/feeds": B.feeds,
                    "/queue": B.queue, "/menu": B.status };
 
@@ -19,6 +21,17 @@ export default async function (msg, ctx) {
   const menu = (t) => send(t, { reply_markup: mainKeyboard() });
 
   if (text === B.cancel) { await clearWait(p, uid); return menu("لغو شد."); }
+
+  // ───── اینستاگرام/فتوشاپ (کد بات قدیمی روی کامپیوتر): پیام‌های مربوط دست‌نخورده برای کامپیوتر ─────
+  const firstWord = text.split(/\s+/)[0].split("@")[0];
+  const isMenu = Object.values(B).includes(text) || COMMANDS[firstWord] || KNOWN_COMMANDS.includes(firstWord);
+  const toPc = firstWord.startsWith("/insta")
+    || (!isMenu && !(await getWait(p, uid)) && (await relayActive(p, uid)));
+  if (toPc) {
+    if (firstWord.startsWith("/insta")) await startRelay(p, uid);
+    if (!(await agentOnline(p))) return menu("🖥 این کار با فتوشاپ روی کامپیوتر انجام میشه؛ <b>سیستم رو روشن کن</b> (serverless_agent).");
+    return relayUpdate(p, (ctx && ctx.update) || { update_id: 0, message: msg });
+  }
 
   const [cmd, ...rest] = text.split(/\s+/);
   const command = cmd.split("@")[0];
