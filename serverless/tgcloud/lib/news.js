@@ -1,7 +1,8 @@
 // منطق اصلی بات خبری روی Telegram Serverless (کارهای سبک).
 // کارهای سنگین (درست کردن عکسی که تلگرام لینکش رو قبول نمی‌کنه) به صورت «job» برای برنامه‌ی کامپیوتر
 // (serverless_agent.py) می‌مونه؛ تا وقتی کامپیوتر روشن نشده، خبر بدون عکس منتشر نمیشه.
-import { DEFAULT_FEEDS, importance, guessAnimeName, DEFAULT_MIN_IMPORTANCE, parseFeed, parseArticle, hashKey, isXFeed, xHandle, parseXSyndication, parseXBridge, SYSTEM_PROMPT, buildPrompt, extractCaption, postCaption,
+import { AGENT_SYSTEM, agentUserPrompt, parseJson, validate, releasePlausible, localizeDate, renderCaption } from "./caption.js";
+import { DEFAULT_FEEDS, importance, eventType, guessAnimeName, DEFAULT_MIN_IMPORTANCE, parseFeed, parseArticle, hashKey, isXFeed, xHandle, parseXSyndication, parseXBridge, SYSTEM_PROMPT, buildPrompt, extractCaption, postCaption,
          escapeHtml } from "./core.js";
 
 export const OWNER_ID = 513902877;
@@ -116,6 +117,66 @@ export async function geminiCaption(p, item) {
   throw new Error(errors.slice(-3).join(" | ") || "Gemini جواب نداد");
 }
 
+// ───────── کپشن مثل بات قدیمی: Gemini با دستور کانال → JSON → چک با منبع → کپشن ─────────
+async function geminiRaw(p, system, user, json) {
+  const key = await cfg(p, "gemini_key", "");
+  if (!key) throw new Error("کلید Gemini ثبت نشده");
+  const models = [await cfg(p, "model", ""), ...DEFAULT_MODELS].filter(Boolean);
+  const errors = [];
+  for (const model of [...new Set(models)]) {
+    for (const [budget, thinking] of [[4096, true], [8000, true], [8000, false]]) {
+      const generationConfig = { temperature: 0.2, maxOutputTokens: budget };
+      if (json) generationConfig.responseMimeType = "application/json";
+      if (thinking) generationConfig.thinkingConfig = { thinkingLevel: "low" };
+      let res;
+      try {
+        res = await p.fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-goog-api-key": key },
+          body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: `${system}\n\n${user}` }] }], generationConfig }),
+        });
+      } catch (e) { errors.push(`${model}: ${e.message}`); break; }
+      if (!res.ok) {
+        let msg = "";
+        try { msg = ((await res.json()).error || {}).message || ""; } catch (e) { /* */ }
+        if (res.status === 400 && /thinking/i.test(msg) && thinking) continue;
+        errors.push(`${model}: HTTP ${res.status} ${msg.slice(0, 80)}`);
+        break;
+      }
+      const cand = ((await res.json()).candidates || [])[0] || {};
+      const text = ((cand.content || {}).parts || []).filter((x) => !x.thought).map((x) => x.text || "").join("");
+      if (text.trim() && cand.finishReason !== "MAX_TOKENS") return { text, model };
+      errors.push(`${model}: جواب ناقص (${cand.finishReason || "?"})`);
+      if (cand.finishReason !== "MAX_TOKENS") break;
+    }
+  }
+  throw new Error(errors.slice(-3).join(" | ") || "Gemini جواب نداد");
+}
+
+/** خروجی: { render, model, importance } یا { notNews: true } */
+export async function agentCaption(p, item, meta) {
+  const user = agentUserPrompt(item, meta, !!item.leak);
+  let reason = "";
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const { text, model } = await geminiRaw(p, AGENT_SYSTEM, attempt ? `${user}\n\nYOUR PREVIOUS OUTPUT WAS REJECTED: ${reason}. Fix it and follow the rules exactly.` : user, true);
+    const [parts, why] = validate(parseJson(text), item, meta);
+    if (why === "not_news") return { notNews: true, model };
+    if (parts) {
+      let dateFa = "";
+      if (parts.release && releasePlausible(parts.release, item.published)) {
+        try { dateFa = localizeDate(parts.release, item.published); } catch (e) { /* */ }
+      }
+      let studio = parts.studio;
+      if (!studio && meta && meta.studio && Number(meta.year || 0) >= new Date().getUTCFullYear() - 1) studio = meta.studio;
+      return { model, importance: parts.importance,
+               render: { emoji: parts.emoji, headline: parts.headline, details: parts.details, synopsis: parts.synopsis,
+                         dateFa, studio, unofficial: !!item.leak } };
+    }
+    reason = why;
+  }
+  throw new Error(`خروجی AI رد شد: ${reason}`);
+}
+
 // ───────── جمع‌آوری خبر ─────────
 export async function collect(p, pre = null) {
   const report = { checked: 0, added: 0, low: 0, errors: [] };
@@ -163,9 +224,12 @@ export async function collect(p, pre = null) {
         continue;
       }
       try {
-        await addNews(p, f, it);
-        report.added++;
-        await logDecision(p, f, it, imp, "✅ فرستاده شد");
+        if ((await addNews(p, f, it)) === "not_news") {
+          await logDecision(p, f, it, imp, "🚫 AI گفت خبر نیست (نقد/راهنما/لیست…)");
+        } else {
+          report.added++;
+          await logDecision(p, f, it, imp, "✅ فرستاده شد");
+        }
       } catch (e) {
         report.errors.push(`${it.title.slice(0, 40)}: ${e.message}`);
         await logDecision(p, f, it, imp, `⚠️ خطا: ${String(e.message || e).slice(0, 80)}`);
@@ -207,8 +271,10 @@ export async function diagnose(p, pre = null) {
   let gemini = "";
   try {
     const sample = out.find((x) => x.pass) || out.find((x) => x.title);
-    const r = await geminiCaption(p, { title: sample ? sample.title : "Test anime gets season 2", summary: "", text: "" });
-    gemini = `✅ ${r.model}: ${r.caption.slice(0, 120)}`;
+    const title = sample ? sample.title : "Test anime gets season 2";
+    const r = await agentCaption(p, { title, summary: "", text: "", eventType: eventType(title, "") },
+                                 await anilistMeta(p, guessAnimeName(title)));
+    gemini = r.notNews ? `✅ ${r.model}: (خبر نیست)` : `✅ ${r.model}:\n${renderCaption(r.render, "")}`;
   } catch (e) { gemini = `❌ ${e.message}`; }
   return { minImp, gemini, items: out };
 }
@@ -239,12 +305,13 @@ export async function recoverLost(p, pre = null, maxAgeDays = 3) {
 
 // ───────── محبوبیت انیمه از AniList (کش ۷ روزه) ─────────
 const ANILIST_QUERY = `query ($s: String) { Media(search: $s, type: ANIME, sort: SEARCH_MATCH) {
-  title { romaji english } synonyms popularity startDate { year } } }`;
+  title { romaji english } synonyms popularity startDate { year } genres description(asHtml: false)
+  bannerImage coverImage { extraLarge } studios(isMain: true) { nodes { name } } } }`;
 
 export async function anilistMeta(p, name) {
   const norm = String(name || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
   if (norm.length < 3) return null;
-  const key = "al:" + hashKey(norm);
+  const key = "al2:" + hashKey(norm);
   const cached = await p.kv.get(key);
   if (cached && Date.now() - cached.at < (cached.meta ? 7 : 1) * 86400e3) return cached.meta;
   let meta = null;
@@ -261,7 +328,11 @@ export async function anilistMeta(p, name) {
       const titles = [m.title && m.title.romaji, m.title && m.title.english, ...(m.synonyms || [])].join(" ").toLowerCase();
       if ([...words].some((w) => titles.includes(w))) {
         meta = { popularity: m.popularity || 0, year: (m.startDate || {}).year || 0,
-                 title: (m.title && (m.title.english || m.title.romaji)) || "" };
+                 title: (m.title && (m.title.english || m.title.romaji)) || "", genres: (m.genres || []).slice(0, 4),
+                 description: String(m.description || "").replace(/<[^>]+>/g, " ").replace(/\(Source:[^)]*\)/gi, "")
+                   .replace(/\s+/g, " ").trim().slice(0, 1200),
+                 banner: m.bannerImage || "", cover: (m.coverImage || {}).extraLarge || "",
+                 studio: (((m.studios || {}).nodes || [])[0] || {}).name || "" };
       }
     }
   } catch (e) { return null; }                               // خطای شبکه رو کش نکن
@@ -337,20 +408,29 @@ async function addNews(p, feed, it) {
     } catch (e) { /* صفحه باز نشد؛ همون خلاصه‌ی RSS */ }
   }
   const item = { title: it.title, link: it.link, published: it.published, summary: it.summary, text: article.text,
-                 leak: !!it.leak };
-  const { caption, model } = await geminiCaption(p, item);
+                 leak: !!it.leak, eventType: eventType(it.title, it.summary) };
+  const meta = await anilistMeta(p, guessAnimeName(it.title));
+  const out = await agentCaption(p, item, meta);
+  if (out.notNews) return "not_news";
+  let image = article.image || it.image || "";
+  if (!image || GENERIC_IMAGE.test(image)) image = (meta && (meta.banner || meta.cover)) || image;   // لوگوی سایت به‌جای عکس خبر
   const id = hashKey(it.link + Date.now());
-  const news = { id, title: it.title, link: it.link, source: feed.name, image: article.image || it.image || "",
-                 caption, model, status: "pending", file_id: "", created: Date.now(), importance: it.importance,
-                 summary: String(it.summary || "").slice(0, 1500) };
+  const news = { id, title: it.title, link: it.link, source: feed.name, image,
+                 render: out.render, caption: out.render.headline, model: out.model, status: "pending", file_id: "",
+                 created: Date.now(), importance: it.importance, summary: String(it.summary || "").slice(0, 1500) };
   await p.kv.set("news:" + id, news);
   await preview(p, news);
+  return "ok";
 }
 
-function reviewKeyboard(id) {
-  return { inline_keyboard: [[{ text: "✅ انتشار", callback_data: `nw:ok:${id}` },
-                              { text: "❌ رد", callback_data: `nw:no:${id}` }],
-                             [{ text: "🎨 پست اینستاگرام", callback_data: `ig0:${id}` }]] };
+// عکس‌های عمومی سایت (لوگو/عکس پیش‌فرض اشتراک‌گذاری) عکس خبر نیستن
+const GENERIC_IMAGE = /logo|default|placeholder|og[-_]?image|share[-_]?image|social[-_]?(?:card|share)|favicon|site[-_]?image/i;
+
+function reviewKeyboard(id, link = "") {
+  const rows = [[{ text: "✅ انتشار", callback_data: `nw:ok:${id}` }, { text: "❌ رد", callback_data: `nw:no:${id}` }],
+                [{ text: "🎨 پست اینستاگرام", callback_data: `ig0:${id}` }]];
+  if (/^https?:\/\//.test(link)) rows.push([{ text: "🔗 منبع اصلی", url: link }]);
+  return { inline_keyboard: rows };
 }
 
 // ───────── پست اینستاگرام (کاور + فتوشاپ): کل کار با کد بات قدیمی روی کامپیوتر انجام میشه ─────────
@@ -394,8 +474,16 @@ export async function agentUpdates(p) {
 }
 
 function previewText(p, news) {
-  return `${escapeHtml(news.caption)}\n\n— <i>${escapeHtml(news.source)}</i> · 🤖 ${escapeHtml(news.model || "")}` +
-    (news.importance !== undefined ? ` · ⭐️ ${news.importance}/100` : "");
+  // مثل آرشیو بات قدیمی: کپشن تمیز + برچسب «با AI بازنویسی شده» (این برچسب‌ها توی کانال نمیان)
+  const note = `✅ 🤖 این متن با AI بازنویسی شده (${escapeHtml(news.model || "")})\n` +
+    `— <i>${escapeHtml(news.source)}</i>` + (news.importance !== undefined ? ` · ⭐️ ${news.importance}/100` : "");
+  const body = news.render ? renderCaption(news.render, "", 1024 - note.length - 4) : escapeHtml(news.caption);
+  return `${body}\n\n${note}`;
+}
+
+/** کپشن نهایی کانال: همون کپشن + امضا (بدون برچسب‌های ادمین) */
+function channelCaption(news, footer) {
+  return news.render ? renderCaption(news.render, footer) : postCaption(news.caption, footer);
 }
 
 // ───────── پیش‌نمایش برای ادمین ─────────
@@ -407,7 +495,7 @@ export async function preview(p, news) {
     try {
       const msg = await sendPhotoSmart(p, { chat_id: id, photo: news.file_id || photo,
                                             caption: previewText(p, news).slice(0, 1024),
-                                            parse_mode: "HTML", reply_markup: reviewKeyboard(news.id) }, news);
+                                            parse_mode: "HTML", reply_markup: reviewKeyboard(news.id, news.link) }, news);
       ok++;
       if (!news.file_id && photoId(msg)) {                   // دفعه‌های بعد با file_id (بدون دانلود دوباره)
         news.file_id = photoId(msg);
@@ -426,9 +514,9 @@ export async function needImage(p, news, reason, after) {
   const job = { id: "j" + news.id, type: "image", news_id: news.id, image: news.image, page: news.link, after,
                 created: Date.now(), taken: 0,
                 chat_id: after === "post" ? await cfg(p, "channel", "") : OWNER_ID,
-                caption: after === "post" ? postCaption(news.caption, await cfg(p, "footer", DEFAULT_FOOTER))
+                caption: after === "post" ? channelCaption(news, await cfg(p, "footer", DEFAULT_FOOTER))
                                           : previewText(p, news).slice(0, 1024),
-                reply_markup: after === "post" ? null : reviewKeyboard(news.id) };
+                reply_markup: after === "post" ? null : reviewKeyboard(news.id, news.link) };
   await p.kv.set("job:" + job.id, job);
   await notifyAdmins(p,
     `🖥 <b>این خبر عکس لازم داره</b>\n«${escapeHtml(news.title)}»\n\n⚠️ ${escapeHtml(reason)}\n\n` +
@@ -445,7 +533,7 @@ export async function publish(p, id) {
   const channel = await cfg(p, "channel", "");
   if (!channel) return "کانال ثبت نشده (/setchannel)";
   const photo = news.file_id || news.image;
-  const caption = postCaption(news.caption, await cfg(p, "footer", DEFAULT_FOOTER));
+  const caption = channelCaption(news, await cfg(p, "footer", DEFAULT_FOOTER));
   if (!photo) { await needImage(p, news, "عکسی برای این خبر نیست", "post"); return "عکس لازم داره؛ سیستم رو روشن کن"; }
   try {
     await sendPhotoSmart(p, { chat_id: channel, photo, caption, parse_mode: "HTML" }, news);
@@ -492,7 +580,7 @@ export async function resendPreview(p, chatId, news) {
       reply_markup: { inline_keyboard: [[{ text: "❌ رد", callback_data: `nw:no:${news.id}` }]] } });
   }
   return sendPhotoSmart(p, { chat_id: chatId, photo, caption: previewText(p, news).slice(0, 1024),
-                             parse_mode: "HTML", reply_markup: reviewKeyboard(news.id) }, news);
+                             parse_mode: "HTML", reply_markup: reviewKeyboard(news.id, news.link) }, news);
 }
 
 // ───────── برای برنامه‌ی کامپیوتر (از طریق «tgcloud run»؛ serverless_agent.py) ─────────
@@ -530,10 +618,14 @@ export async function agentDone(p, { job_id, ok, file_id, error }) {
   }
   const news = await p.kv.get("news:" + job.news_id);
   if (!ok) {
-    job.taken = 0;
     job.error = String(error || "").slice(0, 200);
-    await p.kv.set("job:" + job_id, job);
-    await notifyAdmins(p, `⚠️ کامپیوتر نتونست عکس «${escapeHtml(news ? news.title : job_id)}» رو درست کنه:\n${escapeHtml(job.error)}`);
+    job.tries = (job.tries || 0) + 1;
+    if (job.tries < 3) {                                      // بی‌صدا دوباره امتحان (۱۰ دقیقه بعد)
+      await p.kv.set("job:" + job_id, job);
+      return { ok: true };
+    }
+    await p.kv.del("job:" + job_id);
+    await notifyAdmins(p, `⚠️ کامپیوتر ۳ بار نتونست عکس «${escapeHtml(news ? news.title : job_id)}» رو درست کنه و بیخیالش شد:\n${escapeHtml(job.error)}`);
     return { ok: true };
   }
   await p.kv.del("job:" + job_id);
