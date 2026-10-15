@@ -289,6 +289,17 @@ def old_bot():
         import news as mod
         mod.init_db()
         mod._news_v2_init_db()
+        orig_clean = mod._insta_clean_title
+
+        def clean_title(title, name):                             # اسم لاتین توی [] تا توی کاور زرد بشه (حتی اگه AI کوتاهش کرده)
+            t = orig_clean(title, name)
+            if "[" not in t:
+                runs = re.findall(r"[A-Za-z0-9][A-Za-z0-9 :!'’&.\-]*[A-Za-z0-9!']", t)
+                best = max([r for r in runs if re.search(r"[A-Za-z]{2}", r)], key=len, default="")
+                if len(best) >= 3:
+                    t = t.replace(best, f"[{best}]", 1)
+            return t
+        mod._insta_clean_title = clean_title
         _old_bot = mod
     return _old_bot
 
@@ -315,6 +326,10 @@ def handle_insta(job):
         row = conn.execute("SELECT id FROM news_v2_items WHERE source_id=0 AND guid=?", (guid,)).fetchone()
         if row:
             item_id = row["id"]
+            conn.execute("UPDATE news_v2_items SET anime_eng_name=?, anime_display=?, facts_json=?, caption=?, event_type=?"
+                         " WHERE id=?", (facts["anime_eng_name"], facts["anime_eng_name"], json.dumps(facts, ensure_ascii=False),
+                                         n.get("caption") or "", event, item_id))
+            conn.commit()
         else:
             cur = conn.execute(
                 "INSERT INTO news_v2_items(source_id, guid, title, url, summary, article_text, image_url, event_type,"

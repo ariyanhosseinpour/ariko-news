@@ -168,7 +168,7 @@ export async function agentCaption(p, item, meta) {
       }
       let studio = parts.studio;
       if (!studio && meta && meta.studio && Number(meta.year || 0) >= new Date().getUTCFullYear() - 1) studio = meta.studio;
-      return { model, importance: parts.importance,
+      return { model, importance: parts.importance, animeTitle: parts.animeTitle,
                render: { emoji: parts.emoji, headline: parts.headline, details: parts.details, synopsis: parts.synopsis,
                          dateFa, studio, unofficial: !!item.leak } };
     }
@@ -426,6 +426,7 @@ async function addNews(p, feed, it) {
   const id = hashKey(it.link + Date.now());
   const news = { id, title: it.title, link: it.link, source: feed.name, image,
                  render: out.render, caption: out.render.headline, model: out.model, status: "pending", file_id: "",
+                 anime: out.animeTitle || guessAnimeName(it.title),
                  created: Date.now(), importance: it.importance, summary: String(it.summary || "").slice(0, 1500) };
   await p.kv.set("news:" + id, news);
   await preview(p, news);
@@ -456,11 +457,13 @@ export async function instaJob(p, newsId, uid) {
   const news = await p.kv.get("news:" + newsId);
   if (!news) return { ok: false, text: "این خبر پیدا نشد" };
   const job = { id: "i" + newsId + uid, type: "insta", uid, created: Date.now(), taken: 0,
-                news: { id: news.id, title: news.title, link: news.link, caption: news.caption, image: news.image,
+                news: { id: news.id, title: news.title, link: news.link, image: news.image,
+                        caption: news.render ? renderCaption(news.render, "") : news.caption,
                         file_id: news.file_id, source: news.source, summary: news.summary || "", anime: "" } };
-  const guess = guessAnimeName(news.title);
-  const meta = guess ? await anilistMeta(p, guess) : null;
-  job.news.anime = (meta && meta.title) || guess;
+  // اسم انیمه همون‌طور که توی خبر اومده (مثل بات قدیمی)، تا توی کاور [زرد] بشه
+  let anime = news.anime || guessAnimeName(news.title);
+  if (!anime) { const meta = await anilistMeta(p, news.title); anime = (meta && meta.title) || ""; }
+  job.news.anime = anime;
   await p.kv.set("job:" + job.id, job);
   await startRelay(p, uid);
   return { ok: true, online: await agentOnline(p) };
