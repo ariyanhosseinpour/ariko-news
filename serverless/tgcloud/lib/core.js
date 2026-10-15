@@ -54,8 +54,12 @@ export function parseArticle(html) {
   const image = decodeEntities(meta("og:image") || meta("twitter:image"));
   const paras = [...html.matchAll(/<p\b[^>]*>([\s\S]*?)<\/p>/gi)].map(m => stripHtml(m[1])).filter(t => t.length > 40);
   // لینک تریلر یوتیوب داخل مقاله (embed / watch / youtu.be)
-  const yt = [...html.matchAll(/(?:youtube(?:-nocookie)?\.com\/(?:embed\/|watch\?(?:[^"'<>\s]*?&(?:amp;)?)?v=|shorts\/)|youtu\.be\/)([A-Za-z0-9_-]{11})/g)]
+  let yt = [...html.matchAll(/(?:youtube(?:-nocookie)?\.com\/(?:embed\/|watch\?(?:[^"'<>\s]*?&(?:amp;)?)?v=|shorts\/)|youtu\.be\/)([A-Za-z0-9_-]{11})/g)]
     .map((m) => `https://www.youtube.com/watch?v=${m[1]}`);
+  // سایت‌هایی که یوتیوب رو با پخش‌کننده‌ی خودشون می‌ذارن (Anime Corner: …?yt_embed=ID ، lite-youtube videoid=ID)
+  for (const m of html.matchAll(/(?:[?&](?:yt_embed|yt_id|youtube_id)=|<lite-youtube[^>]*videoid=["']|data-(?:yt|youtube)(?:-id)?=["'])([A-Za-z0-9_-]{11})(?![A-Za-z0-9_-])/gi)) {
+    yt.push(`https://www.youtube.com/watch?v=${m[1]}`);
+  }
   return { image, text: paras.join("\n").slice(0, 6000), videos: [...new Set(yt)].slice(0, 3), images: articleImages(html) };
 }
 
