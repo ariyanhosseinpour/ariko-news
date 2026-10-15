@@ -1,7 +1,7 @@
 // منطق اصلی بات خبری روی Telegram Serverless (کارهای سبک).
 // کارهای سنگین (درست کردن عکسی که تلگرام لینکش رو قبول نمی‌کنه) به صورت «job» برای برنامه‌ی کامپیوتر
 // (serverless_agent.py) می‌مونه؛ تا وقتی کامپیوتر روشن نشده، خبر بدون عکس منتشر نمیشه.
-import { DEFAULT_FEEDS, parseFeed, parseArticle, hashKey, isXFeed, xHandle, parseXSyndication, parseXBridge, SYSTEM_PROMPT, buildPrompt, extractCaption, postCaption,
+import { DEFAULT_FEEDS, importance, DEFAULT_MIN_IMPORTANCE, parseFeed, parseArticle, hashKey, isXFeed, xHandle, parseXSyndication, parseXBridge, SYSTEM_PROMPT, buildPrompt, extractCaption, postCaption,
          escapeHtml } from "./core.js";
 
 export const OWNER_ID = 513902877;
@@ -105,7 +105,8 @@ export async function geminiCaption(p, item) {
 
 // ───────── جمع‌آوری خبر ─────────
 export async function collect(p) {
-  const report = { checked: 0, added: 0, errors: [] };
+  const report = { checked: 0, added: 0, low: 0, errors: [] };
+  const minImp = Number(await cfg(p, "min_importance", DEFAULT_MIN_IMPORTANCE));
   for (const f of await feeds(p)) {
     if (f.active === false) continue;                         // منبع غیرفعال
     if (report.added >= MAX_NEW_PER_RUN) break;
@@ -131,6 +132,9 @@ export async function collect(p) {
       await p.kv.set(seenKey, 1);
       if (first) continue;                                    // بار اول فقط علامت‌گذاری (سیل خبرهای قدیمی نیاد)
       if (it.leak && !it.image) continue;                     // پست X بدون عکس: کامپیوتر هم عکسی براش پیدا نمی‌کنه
+      const official = /official/i.test(f.name) || /crunchyroll/i.test(f.name + f.url);
+      it.importance = importance(it, official).score;
+      if (it.importance < minImp) { report.low++; continue; }  // فیلتر اهمیت خبر (قبل از Gemini؛ سهمیه هدر نمیره)
       try {
         await addNews(p, f, it);
         report.added++;
@@ -187,7 +191,7 @@ async function addNews(p, feed, it) {
   const { caption, model } = await geminiCaption(p, item);
   const id = hashKey(it.link + Date.now());
   const news = { id, title: it.title, link: it.link, source: feed.name, image: article.image || it.image || "",
-                 caption, model, status: "pending", file_id: "", created: Date.now() };
+                 caption, model, status: "pending", file_id: "", created: Date.now(), importance: it.importance };
   await p.kv.set("news:" + id, news);
   await preview(p, news);
 }
@@ -198,7 +202,8 @@ function reviewKeyboard(id) {
 }
 
 function previewText(p, news) {
-  return `${escapeHtml(news.caption)}\n\n— <i>${escapeHtml(news.source)}</i> · 🤖 ${escapeHtml(news.model || "")}`;
+  return `${escapeHtml(news.caption)}\n\n— <i>${escapeHtml(news.source)}</i> · 🤖 ${escapeHtml(news.model || "")}` +
+    (news.importance !== undefined ? ` · ⭐️ ${news.importance}/100` : "");
 }
 
 // ───────── پیش‌نمایش برای ادمین ─────────

@@ -1,6 +1,6 @@
 // منوی دکمه‌ای بات (مثل بات قدیمی): کیبورد پایین صفحه + دکمه‌های شیشه‌ای.
 import { cfg, feeds, admins, pendingNews, OWNER_ID, RANK_SOURCES } from "./news.js";
-import { escapeHtml, hashKey, isXFeed, xHandle } from "./core.js";
+import { escapeHtml, hashKey, isXFeed, xHandle, IMPORTANCE_LEVELS, DEFAULT_MIN_IMPORTANCE } from "./core.js";
 
 export const B = {
   check: "📰 بررسی خبرها الان",
@@ -13,6 +13,7 @@ export const B = {
   ai: "🔑 تنظیم هوش مصنوعی",
   admins: "👤 ادمین‌ها",
   rank: "🧪 تست رنکینگ هفتگی",
+  importance: "⭐️ فیلتر اهمیت خبر",
   cancel: "❌ لغو",
 };
 
@@ -30,6 +31,7 @@ export const OLD = {
   "✍️ امضای کانال خبر": B.footer,
   "🔑 تنظیم سرویس AI": B.ai,
   "🧪 تست رنکینگ هفتگی": B.rank,
+  "⭐️ فیلتر اهمیت خبر": B.importance,
 };
 
 export function mainKeyboard() {
@@ -40,7 +42,7 @@ export function mainKeyboard() {
       [{ text: B.feeds }, { text: B.addFeed }],
       [{ text: B.channel }, { text: B.footer }],
       [{ text: B.ai }, { text: B.admins }],
-      [{ text: B.rank }],
+      [{ text: B.importance }, { text: B.rank }],
     ],
     resize_keyboard: true,
     is_persistent: true,
@@ -161,3 +163,13 @@ export const rankView = () => ({
   reply_markup: { inline_keyboard: [...Object.entries(RANK_SOURCES).map(([k, label]) => [{ text: label, callback_data: `rk:${k}` }]),
                                     [{ text: "❌ بستن", callback_data: "rk:close" }]] },
 });
+
+export async function importanceView(p) {
+  const cur = Number(await cfg(p, "min_importance", DEFAULT_MIN_IMPORTANCE));
+  return {
+    text: "⭐️ <b>فیلتر اهمیت خبر</b>\n\nهر خبر یه امتیاز اهمیت از ۰ تا ۱۰۰ می‌گیره (نوع خبر و کلیدواژه‌ها).\n" +
+      "خبرهای زیر این حد اصلاً برات فرستاده نمیشن.\nامتیاز هر خبر پایین پیش‌نمایشش نوشته میشه (⭐️).",
+    reply_markup: { inline_keyboard: IMPORTANCE_LEVELS.map(([v, label]) =>
+      [{ text: `${v === cur ? "✅ " : ""}${label} (${v}+)`, callback_data: `im:${v}` }]) },
+  };
+}

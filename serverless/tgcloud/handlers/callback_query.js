@@ -2,7 +2,7 @@
 import { platform } from "../lib/platform.js";
 import { isAdmin, publish, reject, feeds, setCfg, cfg, admins, rankJob, RANK_SOURCES } from "../lib/news.js";
 import { escapeHtml, hashKey } from "../lib/core.js";
-import { feedCard, aiView, adminsView, setWait, cancelKeyboard, WAIT_PROMPT } from "../lib/menu.js";
+import { importanceView, feedCard, aiView, adminsView, setWait, cancelKeyboard, WAIT_PROMPT } from "../lib/menu.js";
 
 export default async function (q, ctx) {
   const p = platform();
@@ -95,6 +95,13 @@ export default async function (q, ctx) {
         ? "⏳ کامپیوتر داره کارت رو می‌سازه؛ تا یکی دو دقیقه دیگه برات میاد."
         : "🖥 <b>سیستم رو روشن کن</b> (serverless_agent)؛ به محض روشن شدن کارت رو می‌سازه و برات می‌فرسته."),
         reply_markup: { inline_keyboard: [] } });
+    }
+    case "im": {                                             // فیلتر اهمیت خبر
+      const v = Number(action);
+      if (!(v >= 0 && v <= 100)) return answer();
+      await setCfg(p, "min_importance", v);
+      await answer("✅ ذخیره شد");
+      return edit(await importanceView(p));
     }
     case "ch": return action === "set" ? ask("channel") : answer();
     case "ft": return action === "set" ? ask("footer") : answer();

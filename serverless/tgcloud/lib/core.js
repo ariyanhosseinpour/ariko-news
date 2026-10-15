@@ -174,3 +174,64 @@ export function parseXBridge(xml, handle) {
   }
   return out;
 }
+
+// ───────── اهمیت خبر (۰ تا ۱۰۰؛ همون منطق بات قدیمی) ─────────
+export const IMPORTANCE_LEVELS = [[0, "همه خبرها"], [40, "معمولی به بالا"], [55, "فقط خبرهای مهم (پیشنهادی)"],
+                                  [75, "فقط خبرهای خیلی مهم"]];
+export const DEFAULT_MIN_IMPORTANCE = 55;
+
+const IMPORTANCE_BASE = { season_announcement: 85, new_anime: 85, cancellation: 85, delay: 75, release_date: 75,
+                          movie: 70, trailer: 65, trailer_visual: 65, character_pv: 45, visual: 45, other: 25 };
+const IMPORTANCE_UP = [
+  [/\b(?:final|last)\s+episode\b|\b(?:double-length|hour-long|extended|\d{2}-minute)\s+(?:episode|finale)\b|\bepisode\s+\d+\b.{0,60}\b(?:minutes?|runtime)\b/, 30, "قسمت پایانی/طول قسمت"],
+  [/\bbox\s+office\b|\bbillion\s+yen\b|\brecord[- ]breaking\b|\bbreaks?\s+(?:the\s+)?record\b/, 20, "گیشه/رکورد"],
+  [/\b(?:leak(?:ed|s)?|rumou?r(?:ed|s)?|reportedly|registered|rating\s+board|trademark(?:ed)?)\b/, 15, "لیک/گزارش"],
+  [/\b(?:finale|concludes?|final\s+season|ending\s+confirmed)\b/, 15, "پایان سری"],
+  [/\b(?:netflix|crunchyroll|disney\+?|amazon)\b.{0,60}\b(?:exclusive|acquires?|licens\w*)\b/, 10, "پلتفرم"],
+];
+const IMPORTANCE_DOWN = [
+  [/\b(?:explained|explainer|review|recap|reactions?|guide|everything\s+(?:we|you)\s+know|what\s+to\s+expect|ranked|should\s+you\s+watch|theor(?:y|ies)|essay|opinion|editorial|listicle|\d+\s+(?:best|things|reasons))\b|\bwhere\s+to\s+(?:watch|stream)\b|\bhow\s+to\s+watch\b|\bwatch\s+order\b|\bbest\s+anime\b/, -60, "مقاله تحلیلی/غیرخبری"],
+  [/\bmusic\s+video\b|\b(?:new\s+)?single\b|\balbum\b|\bconcert\b|\blive\s+tour\b|\bsong\b/, -35, "موسیقی"],
+  [/\b(?:figures?|merch(?:andise)?|cafe|pop-up|exhibition|stage\s+play|musical|pachinko|lottery|blu-ray|dvd|artbook|apparel)\b/, -30, "محصول/رویداد جانبی"],
+  [/\b(?:video\s+game|mobile\s+game|gacha|visual\s+novel|game)\b/, -25, "بازی"],
+  [/\b(?:manga|light\s+novel)\b/, -10, "مانگا/رمان"],
+  [/\b(?:english\s+dub|dub\s+cast|english\s+cast)\b/, -15, "دوبله انگلیسی"],
+  [/\b(?:film\s+fest(?:ival)?|screens|screening)\b/, -15, "جشنواره/اکران محدود"],
+];
+
+export function eventType(title, summary) {
+  const low = `${title} ${String(summary || "").slice(0, 900)}`.toLowerCase();
+  if (/\b(?:cancelled|canceled|cancellation)\b/.test(low)) return "cancellation";
+  if (/\b(?:delayed|delay|postponed|postponement|rescheduled)\b/.test(low)) return "delay";
+  if (/\b(?:character\s+(?:trailer|pv|video|promo)|character-focused\s+(?:trailer|pv)|introduces?\s+(?:the\s+)?character)\b/.test(low)) return "character_pv";
+  const trailer = /\b(?:trailer|teaser|promotional\s+video|promo\s+video|pv|main\s+pv|teaser\s+pv)\b/.test(low);
+  const visual = /\b(?:key\s+visual|teaser\s+visual|new\s+visual|visual|poster)\b/.test(low);
+  if (trailer && visual) return "trailer_visual";
+  if (trailer) return "trailer";
+  if (visual) return "visual";
+  if (/\bseason\s+\d{1,2}\b.{0,100}\b(?:announced|confirmed|greenlit|green-lit|production|in\s+production|gets|receives)\b/.test(low)
+      || /\b(?:announced|confirmed|greenlit|green-lit|gets|receives)\b.{0,100}\bseason\s+\d{1,2}\b/.test(low)
+      || /\b(?:sequel|new\s+season)\b.{0,80}\b(?:announced|confirmed|greenlit|production)\b/.test(low)) return "season_announcement";
+  if (/\b(?:anime\s+adaptation|tv\s+anime|new\s+anime)\b.{0,100}\b(?:announced|revealed|greenlit|gets|receives)\b/.test(low)
+      || /\b(?:gets|receives|inspires)\b.{0,80}\b(?:tv\s+)?anime\b/.test(low)) return "new_anime";
+  if (/\b(?:film|movie)\b.{0,100}\b(?:announced|revealed|greenlit|premiere|release)\b/.test(low)) return "movie";
+  if (/\b(?:premiere|premieres|air|airs|broadcast|release\s+date|debuts?|starts?\s+airing|returns?)\b/.test(low)
+      && /\b(?:january|february|march|april|may|june|july|august|september|october|november|december|spring|summer|fall|autumn|winter|20\d\d)\b/.test(low)) return "release_date";
+  return "other";
+}
+
+/** { score, reasons } — مثل بات قدیمی (فعلاً بدون محبوبیت AniList) */
+export function importance(item, isOfficial = false) {
+  const text = `${item.title} ${String(item.summary || "").slice(0, 600)}`.toLowerCase();
+  const type = eventType(item.title, item.summary);
+  let score = IMPORTANCE_BASE[type] ?? 25;
+  const reasons = [`نوع خبر ${score}`];
+  const aboutAnime = /\banime\b|\bseason\s+\d|\bepisode\b|\bfilm\b|\bmovie\b/.test(text);
+  for (const [re, d, label] of IMPORTANCE_UP) if (re.test(text)) { score += d; reasons.push(`+${d} ${label}`); }
+  for (const [re, d, label] of IMPORTANCE_DOWN) {
+    if (!re.test(text) || ((label === "بازی" || label === "مانگا/رمان") && aboutAnime)) continue;
+    score += d; reasons.push(`${d} ${label}`);
+  }
+  if (isOfficial) { score += 5; reasons.push("+5 منبع رسمی"); }
+  return { score: Math.max(0, Math.min(100, score)), reasons, type };
+}

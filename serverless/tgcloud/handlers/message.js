@@ -2,7 +2,7 @@
 import { platform } from "../lib/platform.js";
 import { isAdmin, cfg, setCfg, feeds, collect, admins, pendingNews, resendPreview, DEFAULT_FOOTER } from "../lib/news.js";
 import { escapeHtml, parseXHandle, X_PREFIX } from "../lib/core.js";
-import { B, OLD, mainKeyboard, cancelKeyboard, statusText, feedCard, aiView, adminsView, channelView, footerView, rankView,
+import { B, OLD, mainKeyboard, cancelKeyboard, statusText, feedCard, aiView, adminsView, channelView, footerView, rankView, importanceView,
          setWait, getWait, clearWait, WAIT_PROMPT } from "../lib/menu.js";
 
 const COMMANDS = { "/start": B.status, "/status": B.status, "/check": B.check, "/feeds": B.feeds,
@@ -35,6 +35,7 @@ export default async function (msg, ctx) {
       await send("⏳ دارم خبرها رو بررسی می‌کنم…");
       const r = await collect(p);
       return menu(`✅ ${r.checked} خبر بررسی شد، ${r.added} خبر جدید برات اومد.` +
+                  (r.low ? `\n⭐️ ${r.low} خبر کم‌اهمیت رد شد.` : "") +
                   (r.errors.length ? "\n⚠️ " + escapeHtml(r.errors.slice(0, 5).join("\n")) : ""));
     }
     case B.queue: {
@@ -58,6 +59,7 @@ export default async function (msg, ctx) {
     case B.ai: return send(...view(await aiView(p)));
     case B.admins: return send(...view(await adminsView(p)));
     case B.rank: return send(...view(rankView()));
+    case B.importance: return send(...view(await importanceView(p)));
   }
 
   // ───── دستورهای قدیمی (هنوز کار می‌کنن) ─────
