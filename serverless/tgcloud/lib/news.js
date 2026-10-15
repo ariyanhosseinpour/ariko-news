@@ -104,7 +104,7 @@ export async function geminiCaption(p, item) {
 }
 
 // ───────── جمع‌آوری خبر ─────────
-export async function collect(p) {
+export async function collect(p, pre = null) {
   const report = { checked: 0, added: 0, low: 0, errors: [] };
   const minImp = Number(await cfg(p, "min_importance", DEFAULT_MIN_IMPORTANCE));
   for (const f of await feeds(p)) {
@@ -115,12 +115,14 @@ export async function collect(p) {
     const prev = await p.kv.get(stateKey);
     if (isXFeed(f) && prev && Date.now() - prev.at < (prev.wait || X_EVERY_MS)) continue;   // X رو کمتر بپرس که محدود نکنه
     try {
-      items = await fetchItems(p, f);
-      await p.kv.set(stateKey, { at: Date.now(), error: items.length ? "" : "هیچ خبری توی فید پیدا نشد" });
+      items = await fetchItems(p, f, pre);
+      const via = pre && (pre[f.url] || (isXFeed(f) && pre[xUrl(xHandle(f))])) ? "pre" : "";
+      await p.kv.set(stateKey, { at: Date.now(), error: items.length ? "" : "هیچ خبری توی فید پیدا نشد", via });
     } catch (e) {
       report.errors.push(`${f.name}: ${e.message}`);
       const wait = isXFeed(f) ? Math.min(3 * 3600e3, Math.max(X_EVERY_MS, ((prev && prev.wait) || X_EVERY_MS) * 2)) : 0;
-      await p.kv.set(stateKey, { at: Date.now(), error: String(e.message || e).slice(0, 180), wait });
+      await p.kv.set(stateKey, { at: Date.now(), error: String(e.message || e).slice(0, 180), wait,
+                                 via: (prev && prev.via) || "" });
       continue;
     }
     const first = !(await p.kv.get("feedinit:" + hashKey(f.url)));
@@ -193,24 +195,35 @@ export async function anilistMeta(p, name) {
 const X_EVERY_MS = 15 * 60 * 1000;                           // هر اکانت X حداکثر هر ۱۵ دقیقه یه بار
 const BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36";
 
-async function fetchItems(p, f) {
+const xUrl = (handle) => `https://syndication.twitter.com/srv/timeline-profile/screen-name/${encodeURIComponent(handle)}`;
+
+// صفحه‌هایی که سرور تلگرام بهشون دسترسی نداره رو گیت‌هاب/کامپیوتر قبلش می‌گیره و متنشون رو می‌فرسته (prefetched)
+async function pget(p, url, headers, pre) {
+  const hit = pre && pre[url];
+  if (hit) {
+    if (hit.error) throw new Error(`(گیت‌هاب) ${hit.error}`);
+    return { ok: hit.status >= 200 && hit.status < 300, status: hit.status, text: async () => hit.text || "" };
+  }
+  return p.fetch(url, { headers });
+}
+
+async function fetchItems(p, f, pre) {
   if (!isXFeed(f)) {
-    const res = await p.fetch(f.url, { headers: { "User-Agent": "Mozilla/5.0 (ARIKO news)" } });
+    const res = await pget(p, f.url, { "User-Agent": "Mozilla/5.0 (ARIKO news)" }, pre);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return parseFeed(await res.text());
   }
-  // X: اول تایم‌لاین عمومی خود X، اگه نشد bridgeها (Nitter و…)
+  // X: تایم‌لاین عمومی خود X (اگه گیت‌هاب/کامپیوتر گرفته بود، همون)، بعد bridgeهایی که ادمین گذاشته
   const handle = xHandle(f);
   const errors = [];
   try {
-    const res = await p.fetch(`https://syndication.twitter.com/srv/timeline-profile/screen-name/${encodeURIComponent(handle)}`,
-                              { headers: { "User-Agent": BROWSER_UA, "Accept": "text/html", "Accept-Language": "en-US,en;q=0.9" } });
+    const res = await pget(p, xUrl(handle), { "User-Agent": BROWSER_UA, "Accept": "text/html", "Accept-Language": "en-US,en;q=0.9" }, pre);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const items = parseXSyndication(await res.text(), handle);
     if (items.length) return items;
     errors.push("X: پستی برنگردوند");
   } catch (e) { errors.push(`X: ${e.message}`); }
-  for (const tpl of (await cfg(p, "x_bridges", null)) || ["https://nitter.net/{handle}/rss"]) {
+  for (const tpl of (await cfg(p, "x_bridges", null)) || []) {
     try {
       const res = await p.fetch(tpl.replace("{handle}", encodeURIComponent(handle)), { headers: { "User-Agent": BROWSER_UA } });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -220,6 +233,22 @@ async function fetchItems(p, f) {
     } catch (e) { errors.push(`bridge: ${e.message}`); }
   }
   throw new Error(errors.join(" | "));
+}
+
+/** لیست آدرس‌هایی که گیت‌هاب/کامپیوتر باید قبل از collect بگیره: اکانت‌های X + فیدهایی که سرور بهشون دسترسی نداره */
+export async function prefetchPlan(p) {
+  const out = [];
+  for (const f of await feeds(p)) {
+    if (f.active === false) continue;
+    const st = await p.kv.get("feedstate:" + hashKey(f.url));
+    if (isXFeed(f)) {
+      if (st && Date.now() - st.at < (st.wait || X_EVERY_MS)) continue;
+      out.push({ url: xUrl(xHandle(f)), x: true });
+    } else if (st && ((st.error && /request failed|fetch|HTTP (?:403|429|5\d\d)/i.test(st.error)) || st.via === "pre")) {
+      out.push({ url: f.url });
+    }
+  }
+  return out;
 }
 
 async function addNews(p, feed, it) {

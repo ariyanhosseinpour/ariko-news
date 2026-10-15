@@ -64,12 +64,13 @@ def log(text):
 # ماژول کوچیکی که فقط موقع اجرا فرستاده میشه (deploy نمیشه) و توابع lib/news.js رو صدا می‌زنه
 PC_MODULE = """
 import { platform } from '../lib/platform.js';
-import { agentPoll, agentDone, collect, agentUpdates } from '../lib/news.js';
+import { agentPoll, agentDone, collect, agentUpdates, prefetchPlan } from '../lib/news.js';
 export default async function (input) {
   const p = platform();
   if (input.op === 'poll') return { jobs: await agentPoll(p), updates: await agentUpdates(p) };
   if (input.op === 'done') return await agentDone(p, input.result || {});
-  if (input.op === 'collect') return await collect(p);
+  if (input.op === 'collect') return await collect(p, input.prefetched || null);
+  if (input.op === 'plan') return { urls: await prefetchPlan(p) };
   return { error: 'unknown op' };
 }
 """
@@ -106,6 +107,49 @@ def cloud(op, **args):
     if not data.get("ok"):
         raise RuntimeError(data.get("description") or f"tgcloud run: {data}")
     return (data.get("result") or {}).get("result") or {}
+
+
+BROWSER_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+              "Chrome/130.0 Safari/537.36")
+X_AUTH_TOKEN = os.environ.get("X_AUTH_TOKEN", "").strip()   # کوکی لاگین X (اختیاری؛ همون که بات قدیمی داشت)
+
+
+def prefetch():
+    """صفحه‌هایی که سرور تلگرام بهشون دسترسی نداره (X، سایت‌هایی که بلاکش کردن) اینجا گرفته میشن."""
+    out = {}
+    for item in cloud("plan").get("urls") or []:
+        url = item["url"]
+        headers = {"User-Agent": BROWSER_UA, "Accept-Language": "en-US,en;q=0.9",
+                   "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"}
+        if item.get("x") and X_AUTH_TOKEN:
+            headers["Cookie"] = f"auth_token={X_AUTH_TOKEN}"
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=40) as resp:
+                text = resp.read(3_000_000).decode("utf-8", "ignore")
+                status = resp.status
+        except urllib.error.HTTPError as exc:
+            out[url] = {"status": exc.code, "text": ""}
+            continue
+        except Exception as exc:
+            out[url] = {"error": str(exc)[:150]}
+            continue
+        if item.get("x"):                                       # از صفحه‌ی X فقط داده‌ی پست‌ها لازمه
+            m = re.search(r'<script[^>]+id=["\']__NEXT_DATA__["\'][^>]*>.*?</script>', text, re.S | re.I)
+            text = m.group(0) if m else text[:2000]
+        out[url] = {"status": status, "text": text[:1_500_000]}
+    return out
+
+
+def collect_now():
+    try:
+        pre = prefetch()
+    except Exception as exc:
+        log(f"⚠️ prefetch: {exc}")
+        pre = {}
+    if pre:
+        log("   🌐 " + ", ".join(f"{urllib.parse.urlparse(u).netloc}{'' if v.get('status') == 200 else ' ✗' + str(v.get('status') or v.get('error'))}"
+                                for u, v in pre.items()))
+    return cloud("collect", prefetched=pre)
 
 
 def _download(url, referer=""):
@@ -258,7 +302,7 @@ def main():
             if os.environ.get("GITHUB_ACTIONS"):                    # کد جدید push شده باشه، همین الان استفاده بشه
                 os.system("git pull -q --ff-only >/dev/null 2>&1")
             try:
-                r = cloud("collect")
+                r = collect_now()
                 log(f"checked={r.get('checked')} added={r.get('added')} low={r.get('low', 0)} "
                     f"errors={len(r.get('errors') or [])}")
                 for e in r.get("errors") or []:
@@ -277,7 +321,7 @@ def main():
         try:
             if time.time() - last_collect > 300:                 # چک خبرها (اگه Serverless خودش زمان‌بندی نداشت)
                 last_collect = time.time()
-                r = cloud("collect")
+                r = collect_now()
                 if r.get("added"):
                     log(f"📰 {r['added']} خبر جدید")
             polled = cloud("poll")

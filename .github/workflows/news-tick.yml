@@ -27,6 +27,7 @@ jobs:
       - name: collect news every 5 minutes
         env:
           TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_TOKEN }}
+          X_AUTH_TOKEN: ${{ secrets.X_AUTH_TOKEN }}
         run: python serverless_agent.py --loop ${{ inputs.minutes || '330' }}
       - name: start the next run
         if: always()
