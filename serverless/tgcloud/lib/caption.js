@@ -64,6 +64,8 @@ JSON FORMAT:
   "anime_title": "exact title from SOURCE",
   "emoji": "one fitting emoji",
   "headline": "one short colloquial Persian sentence (see examples). Season/part as Persian words (فصل دوم، پارت دوم). Genre adjectives only from GENRES.",
+  "headline_trailer": "ONLY if SOURCE announces BOTH a new video (trailer/teaser/PV) AND new images (posters/visuals/stills): headline for a separate video post, e.g. «تیزر جدید انیمه‌ی اچی و عاشقانه‌ی «Now That We Draw» منتشر شد.» — otherwise empty string",
+  "headline_images": "same case only: headline for the separate images post, e.g. «پوسترهای جدید انیمه‌ی اچی و عاشقانه‌ی «Now That We Draw» از شخصیت‌های اصلی اثر منتشر شد.» — otherwise empty string",
   "details": ["1-2 colloquial Persian sentences with extra facts from SOURCE only (empty list only if SOURCE has nothing more)"],
   "synopsis": "2-3 sentence spoiler-free colloquial Persian synopsis translated ONLY from SYNOPSIS_EN, or empty string",
   "release_date": "premiere/release date exactly as written in SOURCE (English), or empty string",
@@ -148,9 +150,17 @@ export function validate(data, item, meta) {
   if (studio && !hay.includes(norm(studio))) studio = "";
   let emoji = String(data.emoji || "").trim();
   if (!emoji || emoji.length > 4 || /[A-Za-z0-9؀-ۿ]/.test(emoji)) emoji = "🔥";
+  const extra = {};
+  for (const k of ["headline_trailer", "headline_images"]) {
+    const h = cleanFa(data[k]);
+    if (h && h.length >= 15 && h.length <= 320 && faLetters(h) >= 10 && norm(h).includes(nt) && !checkText(h, hay, numbers)) {
+      extra[k === "headline_trailer" ? "headlineTrailer" : "headlineImages"] = soften(h);
+    }
+  }
   let importance = parseInt(enDigits(String(data.importance)), 10);
   if (!(importance >= 1 && importance <= 10)) importance = null;
-  return [{ animeTitle, emoji, headline: soften(headline), details: details.map(soften), synopsis, release, studio, importance }, ""];
+  return [{ animeTitle, emoji, headline: soften(headline), details: details.map(soften), synopsis, release, studio, importance,
+            ...extra }, ""];
 }
 
 /** چند اصلاح مطمئن از رسمی به محاوره‌ای */

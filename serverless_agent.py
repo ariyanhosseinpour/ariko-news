@@ -357,7 +357,7 @@ def _find_trailer(mod, job):
         raise RuntimeError("اسم انیمه معلوم نیست که توی یوتیوب دنبال تریلرش بگردم")
     queries = ([f"{meta['title_native']} PV"] if meta.get("title_native") else []) + \
               [f"{meta.get('title_romaji') or anime} PV", f"{anime} trailer"]
-    results, seen = [], set()
+    results, seen, errs = [], set(), []
     for q in queries:
         try:
             for r in mod._trailer_search(q, by_date=True, count=8):
@@ -365,7 +365,10 @@ def _find_trailer(mod, job):
                     seen.add(r["url"])
                     results.append(r)
         except Exception as exc:
+            errs.append(str(exc))
             log(f"   ⚠️ جستجوی یوتیوب: {exc}")
+    if not results and errs:
+        raise RuntimeError("جستجوی یوتیوب خطا داد (yt-dlp رو آپدیت کن: pip install -U yt-dlp): " + errs[-1][:150])
     try:
         news_ts = parsedate_to_datetime(job.get("published") or "").timestamp()
     except Exception:
@@ -382,7 +385,7 @@ def _find_trailer(mod, job):
             break
     pick, sure = mod._trailer_pick(names, fresh)
     if not pick:
-        raise RuntimeError("تریلر تازه‌ای توی یوتیوب پیدا نشد")
+        raise RuntimeError(f"تریلر تازه‌ای توی یوتیوب پیدا نشد ({len(results)} نتیجه بررسی شد، اسم: {names[0]})")
     return pick["url"], sure
 
 

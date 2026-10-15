@@ -169,6 +169,7 @@ export async function agentCaption(p, item, meta) {
       let studio = parts.studio;
       if (!studio && meta && meta.studio && Number(meta.year || 0) >= new Date().getUTCFullYear() - 1) studio = meta.studio;
       return { model, importance: parts.importance, animeTitle: parts.animeTitle,
+               headlineTrailer: parts.headlineTrailer || "", headlineImages: parts.headlineImages || "",
                render: { emoji: parts.emoji, headline: parts.headline, details: parts.details, synopsis: parts.synopsis,
                          dateFa, studio, unofficial: !!item.leak } };
     }
@@ -452,7 +453,17 @@ async function addNews(p, feed, it) {
   }
   const trailerNews = TRAILER_TYPES.includes(item.eventType) || /\b(?:trailer|teaser|pv)\b/i.test(it.title);
   if (trailerNews) {                                           // خبر تریلر: ویدیو + کپشن توی یه پیام، با کامپیوتر
-    news.trailer = { url: (article.videos || [])[0] || (it.leak ? it.link : ""), anime: news.anime || "" };
+    const trailer = { url: (article.videos || [])[0] || (it.leak ? it.link : ""), anime: news.anime || "" };
+    if (news.images && news.images.length) {
+      // تریلر + پوستر: دو پست جدا، هر کدوم با تیتر خودش (مثل بات قدیمی)
+      const imagesNews = { ...news, id: id + "p", trailer: undefined,
+                           render: { ...news.render, headline: out.headlineImages || news.render.headline } };
+      await p.kv.set("news:" + imagesNews.id, imagesNews);
+      await preview(p, imagesNews);
+      news.images = []; news.photo_ids = undefined; news.sibling = imagesNews.id;
+      news.render = { ...news.render, headline: out.headlineTrailer || news.render.headline };
+    }
+    news.trailer = trailer;
     await p.kv.set("news:" + id, news);
     await trailerJob(p, news);
     return "ok";
@@ -745,6 +756,11 @@ export async function agentDone(p, { job_id, ok, file_id, error, message_id, not
       await p.kv.set("news:" + news.id, news);
       await ensurePhotoIds(p, news);                            // تریلر + پوستر → یه آلبوم
       for (const id of await admins(p)) { try { await sendPreviewTo(p, id, news); } catch (e) { /* */ } }
+    } else if (news.sibling) {                                  // پست پوستر جدا رفته؛ فقط خبر بده تریلر نشد
+      news.status = "rejected";
+      await p.kv.set("news:" + news.id, news);
+      await notifyAdmins(p, `🎬 تریلر «${escapeHtml(news.anime || news.title)}» دانلود نشد:\n${escapeHtml(String(error || "").slice(0, 200))}\n\n` +
+        "پست پوسترش جدا برات اومده.");
     } else {                                                    // تریلر پیدا/دانلود نشد → پیش‌نمایش عادی با عکس
       news.status = "pending";
       news.trailer_note = String(error || "تریلر پیدا نشد").slice(0, 200);
