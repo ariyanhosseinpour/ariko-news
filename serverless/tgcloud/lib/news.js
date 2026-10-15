@@ -145,7 +145,12 @@ export async function collect(p) {
       try {
         await addNews(p, f, it);
         report.added++;
-      } catch (e) { report.errors.push(`${it.title.slice(0, 40)}: ${e.message}`); }
+      } catch (e) {
+        report.errors.push(`${it.title.slice(0, 40)}: ${e.message}`);
+        const tries = Number((await p.kv.get("retry:" + hashKey(it.link))) || 0) + 1;   // مثلاً Gemini موقتاً جواب نداد
+        await p.kv.set("retry:" + hashKey(it.link), tries);
+        if (tries < 4) await p.kv.del(seenKey);                // تا ۳ بار دیگه توی چک‌های بعدی دوباره امتحان میشه
+      }
     }
     if (first) await p.kv.set("feedinit:" + hashKey(f.url), 1);
   }
