@@ -7,6 +7,9 @@ on:
         description: "اکانت‌های X رو همین الان هم چک کن (بدون صبر)"
         type: boolean
         default: true
+      probe:
+        description: "عیب‌یابی: آدرس یه صفحه‌ی خبر"
+        default: ""
       redo:
         description: "این خبرها از نو ساخته بشن (کلمه‌های تیتر با | جدا)"
         default: ""
@@ -35,4 +38,4 @@ jobs:
         env:
           TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_TOKEN }}
           X_AUTH_TOKEN: ${{ secrets.X_AUTH_TOKEN }}
-        run: python serverless_agent.py ${{ inputs.redo != '' && format('--redo "{0}"', inputs.redo) || '' }} ${{ inputs.clear_jobs && '--clear-jobs' || '' }} ${{ inputs.recover && '--recover' || (inputs.diagnose && '--diagnose' || '--tick') }} ${{ inputs.force && '--force' || '' }}
+        run: python serverless_agent.py ${{ inputs.probe != '' && format('--probe "{0}"', inputs.probe) || '' }} ${{ inputs.redo != '' && format('--redo "{0}"', inputs.redo) || '' }} ${{ inputs.clear_jobs && '--clear-jobs' || '' }} ${{ inputs.recover && '--recover' || (inputs.diagnose && '--diagnose' || '--tick') }} ${{ inputs.force && '--force' || '' }}

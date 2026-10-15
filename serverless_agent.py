@@ -422,6 +422,14 @@ def relay(updates):
 def main():
     if not TG_CLOUD or ":" not in TG_CLOUD:
         sys.exit("TGCLOUD_TOKEN رو توی .env بذار (BotFather → Serverless → CLI Access → Access token).")
+    if "--probe" in sys.argv:                                    # عیب‌یابی: یه صفحه‌ی خبر چه ویدیو/عکسی داره
+        url = sys.argv[sys.argv.index("--probe") + 1]
+        html = urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": BROWSER_UA}), timeout=40).read().decode("utf-8", "ignore")
+        log(f"len={len(html)}")
+        for pat in (r"youtube[^\s\"'<>]{0,80}", r"youtu\.be/[^\s\"'<>]{0,20}", r"lite-youtube[^>]{0,120}", r"data-(?:video-)?id=[\"'][^\"']{6,20}", r"<iframe[^>]{0,200}"):
+            for m in list(dict.fromkeys(re.findall(pat, html)))[:8]:
+                log(f"   {m}")
+        return
     if "--redo" in sys.argv:                                     # --redo "One-Punch|Black Clover" → از نو ساخته میشن
         words = sys.argv[sys.argv.index("--redo") + 1].split("|")
         r = cloud("redo", words=words)
