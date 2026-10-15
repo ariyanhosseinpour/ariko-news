@@ -64,12 +64,13 @@ def log(text):
 # ماژول کوچیکی که فقط موقع اجرا فرستاده میشه (deploy نمیشه) و توابع lib/news.js رو صدا می‌زنه
 PC_MODULE = """
 import { platform } from '../lib/platform.js';
-import { agentPoll, agentDone, collect, agentUpdates, prefetchPlan, diagnose } from '../lib/news.js';
+import { agentPoll, agentDone, collect, agentUpdates, prefetchPlan, diagnose, recoverLost } from '../lib/news.js';
 export default async function (input) {
   const p = platform();
   if (input.op === 'poll') return { jobs: await agentPoll(p), updates: await agentUpdates(p) };
   if (input.op === 'done') return await agentDone(p, input.result || {});
   if (input.op === 'collect') return await collect(p, input.prefetched || null);
+  if (input.op === 'recover') return await recoverLost(p, input.prefetched || null);
   if (input.op === 'diagnose') return await diagnose(p, input.prefetched || null);
   if (input.op === 'plan') return { urls: await prefetchPlan(p, !!input.force) };
   return { error: 'unknown op' };
@@ -338,6 +339,12 @@ def relay(updates):
 def main():
     if not TG_CLOUD or ":" not in TG_CLOUD:
         sys.exit("TGCLOUD_TOKEN رو توی .env بذار (BotFather → Serverless → CLI Access → Access token).")
+    if "--recover" in sys.argv:                                  # خبرهای مهمِ گم‌شده دوباره توی صف چک
+        r = cloud("recover", prefetched=prefetch())
+        log(f"♻️ {len(r.get('recovered') or [])} خبر برگشت:")
+        for t in r.get("recovered") or []:
+            log(f"   {t}")
+        return
     if "--diagnose" in sys.argv:                                 # عیب‌یابی: خبرهای الان هر فید + دیده‌شده؟ + امتیاز
         r = cloud("diagnose", prefetched=prefetch())
         log(f"min_importance={r.get('minImp')}")

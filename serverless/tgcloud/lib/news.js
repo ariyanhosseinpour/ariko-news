@@ -213,6 +213,30 @@ export async function diagnose(p, pre = null) {
   return { minImp, gemini, items: out };
 }
 
+/** بازیابی خبرهای مهمی که دیده شدن ولی هیچ‌وقت ساخته نشدن (مثلاً خطای Gemini قبلی) → توی چک‌های بعدی میان */
+export async function recoverLost(p, pre = null, maxAgeDays = 3) {
+  const minImp = Number(await cfg(p, "min_importance", DEFAULT_MIN_IMPORTANCE));
+  const made = new Set((await p.kv.list("news:")).map((r) => r.value && r.value.link).filter(Boolean));
+  const recovered = [];
+  for (const f of await feeds(p)) {
+    if (f.active === false) continue;
+    let items = [];
+    try { items = await fetchItems(p, f, pre); } catch (e) { continue; }
+    for (const it of items.slice(0, 15)) {
+      const t = Date.parse(it.published || "");
+      if (t && Date.now() - t > maxAgeDays * 86400e3) continue;
+      if (made.has(it.link) || (it.leak && !it.image)) continue;
+      const official = /official/i.test(f.name) || /crunchyroll/i.test(f.name + f.url);
+      if (importance(it, official).score + 20 < minImp) continue;     // حتی با محبوبیت هم رد میشه
+      if (!(await p.kv.get("seen:" + hashKey(it.link)))) continue;
+      await p.kv.del("seen:" + hashKey(it.link));
+      await p.kv.del("retry:" + hashKey(it.link));
+      recovered.push(`${f.name}: ${it.title.slice(0, 70)}`);
+    }
+  }
+  return { recovered };
+}
+
 // ───────── محبوبیت انیمه از AniList (کش ۷ روزه) ─────────
 const ANILIST_QUERY = `query ($s: String) { Media(search: $s, type: ANIME, sort: SEARCH_MATCH) {
   title { romaji english } synonyms popularity startDate { year } } }`;
