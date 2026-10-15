@@ -429,6 +429,11 @@ async function addNews(p, feed, it) {
                  anime: out.animeTitle || guessAnimeName(it.title),
                  created: Date.now(), importance: it.importance, summary: String(it.summary || "").slice(0, 1500),
                  published: it.published || "" };
+  // خبر پوستر/ویژوال: خود عکس‌های داخل مقاله (پوستر واقعی)، نه عکس بندانگشتی صفحه
+  if (VISUAL_TYPES.includes(item.eventType) || /\b(?:visual|poster)s?\b/i.test(it.title)) {
+    const imgs = (article.images || []).filter((u) => !GENERIC_IMAGE.test(u)).slice(0, 4);
+    if (imgs.length) { news.images = imgs; news.image = imgs[0]; }
+  }
   const trailerNews = TRAILER_TYPES.includes(item.eventType) || /\b(?:trailer|teaser|pv)\b/i.test(it.title);
   if (trailerNews) {                                           // خبر تریلر: ویدیو + کپشن توی یه پیام، با کامپیوتر
     news.trailer = { url: (article.videos || [])[0] || (it.leak ? it.link : ""), anime: news.anime || "" };
@@ -442,6 +447,7 @@ async function addNews(p, feed, it) {
 }
 
 const TRAILER_TYPES = ["trailer", "trailer_visual", "character_pv"];
+const VISUAL_TYPES = ["visual", "trailer_visual"];
 
 /** کار دانلود تریلر برای کامپیوتر؛ اگه خاموشه به ادمین‌ها خبر میده و منتظر می‌مونه */
 async function trailerJob(p, news) {
@@ -525,7 +531,61 @@ function channelCaption(news, footer) {
 }
 
 // ───────── پیش‌نمایش برای ادمین ─────────
+// ───────── چند رسانه (پوسترها / تریلر + پوستر) توی یه آلبوم، کپشن روی اولی ─────────
+async function ensurePhotoIds(p, news) {
+  if (news.photo_ids || !(news.images && news.images.length)) return;
+  const ids = [];
+  for (const url of news.images) {                           // یه بار آپلود (بی‌صدا برای صاحب بات) → file_id، بعد پاک
+    try {
+      const msg = await sendPhotoSmart(p, { chat_id: OWNER_ID, photo: url, disable_notification: true }, { image: url });
+      if (photoId(msg)) ids.push(photoId(msg));
+      try { await p.api("deleteMessage", { chat_id: OWNER_ID, message_id: msg.message_id }); } catch (e) { /* */ }
+    } catch (e) { /* این عکس فرستاده نشد؛ بقیه */ }
+  }
+  news.photo_ids = ids;
+  if (ids.length) news.file_id = news.file_id || ids[0];
+  await p.kv.set("news:" + news.id, news);
+}
+
+function mediaList(news) {
+  const items = [];
+  if (news.video_file_id) items.push({ type: "video", media: news.video_file_id, supports_streaming: true });
+  for (const id of news.photo_ids || []) items.push({ type: "photo", media: id });
+  return items;
+}
+
+/** آلبوم (اگه بیشتر از یه رسانه هست)؛ دکمه‌ها توی یه پیام کوچیک زیرش. خروجی: true اگه آلبوم فرستاده شد */
+async function sendAlbum(p, chat, news, caption, buttons) {
+  const items = mediaList(news);
+  if (items.length < 2) return false;
+  const media = items.slice(0, 10).map((m, i) => (i === 0 ? { ...m, caption, parse_mode: "HTML" } : m));
+  const msgs = await p.api("sendMediaGroup", { chat_id: chat, media });
+  if (buttons) {
+    await p.api("sendMessage", { chat_id: chat, text: `👆 «${escapeHtml(news.anime || news.title).slice(0, 120)}»`,
+                                 parse_mode: "HTML", reply_to_message_id: (msgs[0] || {}).message_id, reply_markup: buttons });
+  }
+  return true;
+}
+
+async function sendPreviewTo(p, chat, news) {
+  const caption = previewText(p, news).slice(0, 1024);
+  const kb = reviewKeyboard(news.id, news.link);
+  if (await sendAlbum(p, chat, news, caption, kb)) return;
+  if (news.video_file_id) {
+    return p.api("sendVideo", { chat_id: chat, video: news.video_file_id, caption, parse_mode: "HTML",
+                                supports_streaming: true, reply_markup: kb });
+  }
+  return sendPhotoSmart(p, { chat_id: chat, photo: news.file_id || news.image, caption, parse_mode: "HTML", reply_markup: kb }, news);
+}
+
 export async function preview(p, news) {
+  if (news.images && news.images.length > 1) {
+    await ensurePhotoIds(p, news);
+    if ((news.photo_ids || []).length > 1) {
+      for (const id of await admins(p)) { try { await sendPreviewTo(p, id, news); } catch (e) { /* */ } }
+      return;
+    }
+  }
   const photo = news.file_id || news.image;
   if (!photo) return needImage(p, news, "عکسی برای این خبر پیدا نشد", "preview");
   let ok = 0;
@@ -571,9 +631,11 @@ export async function publish(p, id) {
   const channel = await cfg(p, "channel", "");
   if (!channel) return "کانال ثبت نشده (/setchannel)";
   const caption = channelCaption(news, await cfg(p, "footer", DEFAULT_FOOTER));
-  if (news.video_file_id) {                                   // خبر تریلر: ویدیو با کپشن، یه پیام
-    await p.api("sendVideo", { chat_id: channel, video: news.video_file_id, caption, parse_mode: "HTML",
-                               supports_streaming: true });
+  if (mediaList(news).length > 1 || news.video_file_id) {    // تریلر/چند پوستر: ویدیو و عکس‌ها با کپشن، یه پست
+    if (!(await sendAlbum(p, channel, news, caption, null))) {
+      await p.api("sendVideo", { chat_id: channel, video: news.video_file_id, caption, parse_mode: "HTML",
+                                 supports_streaming: true });
+    }
     news.status = "posted";
     await p.kv.set("news:" + id, news);
     return "✅ منتشر شد";
@@ -620,10 +682,7 @@ export async function pendingNews(p) {
 }
 
 export async function resendPreview(p, chatId, news) {
-  if (news.video_file_id) {
-    return p.api("sendVideo", { chat_id: chatId, video: news.video_file_id, caption: previewText(p, news).slice(0, 1024),
-                                parse_mode: "HTML", supports_streaming: true, reply_markup: reviewKeyboard(news.id, news.link) });
-  }
+  if (news.video_file_id || mediaList(news).length > 1) return sendPreviewTo(p, chatId, news);
   if (news.status === "needs_trailer") {
     return p.api("sendMessage", { chat_id: chatId, parse_mode: "HTML",
       text: `🎬 «${escapeHtml(news.anime || news.title)}»\nمنتظر تریلره؛ سیستم رو روشن کن.`,
@@ -653,7 +712,7 @@ export async function agentPoll(p) {
   return jobs;
 }
 
-export async function agentDone(p, { job_id, ok, file_id, error }) {
+export async function agentDone(p, { job_id, ok, file_id, error, message_id, note }) {
   const job = await p.kv.get("job:" + job_id);
   if (!job) return { ok: true };
   if (job.type === "trailer") {                              // کامپیوتر تریلر رو با کپشن برای صاحب بات فرستاد
@@ -663,12 +722,13 @@ export async function agentDone(p, { job_id, ok, file_id, error }) {
     if (ok && file_id) {
       news.video_file_id = file_id;
       news.status = "pending";
-      await p.kv.set("news:" + news.id, news);
-      for (const id of (await admins(p)).filter((x) => x !== OWNER_ID)) {
-        try { await p.api("sendVideo", { chat_id: id, video: file_id, caption: previewText(p, news).slice(0, 1024),
-                                         parse_mode: "HTML", supports_streaming: true,
-                                         reply_markup: reviewKeyboard(news.id, news.link) }); } catch (e) { /* */ }
+      if (note) news.trailer_note = note;
+      if (message_id) {                                         // ویدیوی موقت کامپیوتر پاک میشه؛ پیش‌نمایش اصلی پایین
+        try { await p.api("deleteMessage", { chat_id: job.chat_id, message_id }); } catch (e) { /* */ }
       }
+      await p.kv.set("news:" + news.id, news);
+      await ensurePhotoIds(p, news);                            // تریلر + پوستر → یه آلبوم
+      for (const id of await admins(p)) { try { await sendPreviewTo(p, id, news); } catch (e) { /* */ } }
     } else {                                                    // تریلر پیدا/دانلود نشد → پیش‌نمایش عادی با عکس
       news.status = "pending";
       news.trailer_note = String(error || "تریلر پیدا نشد").slice(0, 200);

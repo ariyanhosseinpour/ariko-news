@@ -391,22 +391,18 @@ def handle_trailer(job):
     url, note = job.get("url") or "", ""
     if not url:
         url, sure = _find_trailer(mod, job)
-        note = "\n🔎 تریلر از جستجوی یوتیوب پیدا شد" + ("" if sure else " (مطمئن نیستم خودشه؛ قبل از انتشار ببینش)")
-    caption = job.get("caption") or ""
-    if note and len(caption) + len(note) <= 1024:
-        caption += note
+        note = "از جستجوی یوتیوب پیدا شد" + ("" if sure else "؛ مطمئن نیستم خودشه، قبل از انتشار ببینش")
     too_big = None
     for height in [mod.TRAILER_HEIGHT] + list(mod.TRAILER_LOWER_HEIGHTS):
         path = ""
         try:
             path = mod._trailer_download(url, height)
             send_path, vmeta = mod._trailer_prepare(path)
-            with open(send_path, "rb") as fh:
-                msg = mod._send_video_with_meta(int(job["chat_id"]), fh, vmeta, caption=caption, parse_mode="HTML",
-                                                reply_markup=json.dumps(job.get("reply_markup") or {}, ensure_ascii=False),
-                                                supports_streaming=True)
-            log(f"   🎬 تریلر {height}p فرستاده شد")
-            return msg.video.file_id
+            with open(send_path, "rb") as fh:                        # آپلود بی‌صدا؛ سرور پیش‌نمایش اصلی (با پوسترها) رو می‌سازه
+                msg = mod._send_video_with_meta(int(job["chat_id"]), fh, vmeta, caption="🎬 در حال آماده‌سازی تریلر…",
+                                                disable_notification=True, supports_streaming=True)
+            log(f"   🎬 تریلر {height}p آپلود شد")
+            return {"file_id": msg.video.file_id, "message_id": msg.message_id, "note": note}
         except mod.TrailerTooBig as exc:
             too_big = exc
         finally:
@@ -502,7 +498,8 @@ def main():
                     busy_until = time.time() + 15 * 60
                 try:
                     fid = {"rank": handle_rank, "insta": handle_insta, "trailer": handle_trailer}.get(kind, handle)(job)
-                    cloud("done", result={"job_id": job["id"], "ok": True, "file_id": fid})
+                    extra = fid if isinstance(fid, dict) else {"file_id": fid}
+                    cloud("done", result={"job_id": job["id"], "ok": True, **extra})
                     log("   ✅ فرستاده شد")
                 except Exception as exc:
                     cloud("done", result={"job_id": job["id"], "ok": False, "error": str(exc)[:300]})

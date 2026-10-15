@@ -56,7 +56,33 @@ export function parseArticle(html) {
   // لینک تریلر یوتیوب داخل مقاله (embed / watch / youtu.be)
   const yt = [...html.matchAll(/(?:youtube(?:-nocookie)?\.com\/(?:embed\/|watch\?(?:[^"'<>\s]*?&(?:amp;)?)?v=|shorts\/)|youtu\.be\/)([A-Za-z0-9_-]{11})/g)]
     .map((m) => `https://www.youtube.com/watch?v=${m[1]}`);
-  return { image, text: paras.join("\n").slice(0, 6000), videos: [...new Set(yt)].slice(0, 3) };
+  return { image, text: paras.join("\n").slice(0, 6000), videos: [...new Set(yt)].slice(0, 3), images: articleImages(html) };
+}
+
+const BAD_IMG = /logo|avatar|icon|emoji|gravatar|favicon|sprite|placeholder|spinner|pixel|1x1|\/ads?\/|advert|banner-ad|badge|button|share|social|author|profile|comment|thumb-?\d{2,3}x\d{2,3}|-\d{2,3}x\d{2,3}\.(?:jpe?g|png|webp)/i;
+
+/** عکس‌های خود متن خبر (پوستر/ویژوال)، نه لوگو و آواتار و تبلیغ */
+export function articleImages(html) {
+  const body = (html.match(/<article\b[\s\S]*?<\/article>/i) || html.match(/<div[^>]+class=["'][^"']*(?:entry-content|post-content|article-body|content-body|text-zone|meat)[^"']*["'][\s\S]*/i) || [html])[0];
+  const out = [];
+  for (const m of body.matchAll(/<img\b[^>]*>/gi)) {
+    const tag = m[0];
+    const pick = (a) => (tag.match(new RegExp(`\\b${a}=["']([^"']+)["']`, "i")) || [])[1] || "";
+    let src = pick("data-src") || pick("data-lazy-src") || pick("src");
+    const srcset = pick("srcset") || pick("data-srcset");
+    if (srcset) {                                              // بزرگ‌ترین نسخه
+      const best = srcset.split(",").map((x) => x.trim().split(/\s+/)).filter((x) => x[0])
+        .sort((a, b) => parseInt(b[1] || "0", 10) - parseInt(a[1] || "0", 10))[0];
+      if (best) src = best[0];
+    }
+    src = decodeEntities(src);
+    const w = parseInt(pick("width"), 10), h = parseInt(pick("height"), 10);
+    if (!/^https?:\/\//.test(src) || /\.(?:svg|gif)(?:\?|$)/i.test(src) || BAD_IMG.test(src)) continue;
+    if ((w && w < 300) || (h && h < 300)) continue;
+    if (!out.includes(src)) out.push(src);
+    if (out.length >= 6) break;
+  }
+  return out;
 }
 
 export function hashKey(s) {
