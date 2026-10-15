@@ -1,6 +1,6 @@
 // منوی دکمه‌ای بات (مثل بات قدیمی): کیبورد پایین صفحه + دکمه‌های شیشه‌ای.
 import { cfg, feeds, admins, pendingNews, OWNER_ID } from "./news.js";
-import { escapeHtml, hashKey } from "./core.js";
+import { escapeHtml, hashKey, isXFeed, xHandle } from "./core.js";
 
 export const B = {
   check: "📰 بررسی خبرها الان",
@@ -63,6 +63,7 @@ export async function statusText(p) {
 
 // کارت هر منبع (مثل بات قدیمی): وضعیت، نوع، لینک، آخرین بررسی + دکمه‌های حذف/غیرفعال/سایت
 function sourceClass(f) {
+  if (isXFeed(f)) return "غیررسمی / لیک (X)";
   const t = (f.name || "").toLowerCase(), u = (f.url || "").toLowerCase();
   if (t.includes("official")) return "رسمی";
   if (t.includes("crunchyroll") || u.includes("crunchyroll")) return "رسانه رسمی/ناشر";
@@ -77,15 +78,15 @@ export async function feedCard(p, f, i) {
   const h = hashKey(f.url);
   const st = await p.kv.get("feedstate:" + h);
   const on = f.active !== false;
-  let site = f.url;
-  try { site = new URL(f.url).origin; } catch (e) { /* */ }
+  let site = isXFeed(f) ? `https://x.com/${xHandle(f)}` : f.url;
+  if (!isXFeed(f)) try { site = new URL(f.url).origin; } catch (e) { /* */ }
   if (/crunchyrollsvc\.com/.test(site)) site = "https://www.crunchyroll.com/news";
   const rows = [[{ text: "🗑 حذف", callback_data: `fd:ask:${h}` },
                  { text: on ? "⏸ غیرفعال" : "▶️ فعال", callback_data: `fd:tg:${h}` }]];
   if (/^https?:\/\//.test(site)) rows.push([{ text: "🔗 باز کردن سایت", url: site }]);
   return {
     text: `${on ? "🟢" : "⚪️"} #${i + 1} — ${escapeHtml(f.name)}\n` +
-      `🏷 ${sourceClass(f)}\n${escapeHtml(f.url)}\n` +
+      `🏷 ${sourceClass(f)}\n${escapeHtml(isXFeed(f) ? "@" + xHandle(f) : f.url)}\n` +
       `آخرین بررسی: ${st ? tehranTime(st.at) : "هنوز بررسی نشده"}` +
       (st && st.error ? `\n⚠️ ${escapeHtml(st.error)}` : ""),
     reply_markup: { inline_keyboard: rows },
@@ -141,7 +142,10 @@ export async function getWait(p, uid) {
 export const clearWait = (p, uid) => p.kv.del("wait:" + uid);
 
 export const WAIT_PROMPT = {
-  feed: "🔗 لینک RSS منبع رو بفرست.\nاگه خواستی اسمش رو هم بعد از لینک بنویس:\n<code>https://site.com/feed اسم منبع</code>",
+  feed: "🔗 یکی از این‌ها رو بفرست:\n\n" +
+    "🐦 <b>اکانت X (توییتر):</b> آیدی با @ یا لینک پروفایل؛ چندتا رو هم می‌تونی با فاصله یا خط جدید با هم بفرستی:\n" +
+    "<code>@SugoiLITE @d0nut2x</code>\n\n" +
+    "📰 <b>سایت خبری:</b> لینک RSS (اسمش رو هم اگه خواستی بعد از لینک بنویس):\n<code>https://site.com/feed اسم منبع</code>",
   channel: "📢 یه پست از کانال رو برام <b>فوروارد</b> کن (ساده‌ترین راه)،\nیا آیدی کانال رو بفرست: <code>@Ariko_News</code> یا <code>-100…</code>\n\n⚠️ بات باید ادمین کانال باشه.",
   footer: "✍️ متن امضای پایین پست رو بفرست.\nبرای حذف امضا بنویس: <code>-</code>",
   key: "🔑 کلید Gemini رو بفرست (با AIza شروع میشه).\nپیامت بعد از ذخیره پاک میشه.",

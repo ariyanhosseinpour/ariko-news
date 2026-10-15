@@ -78,6 +78,7 @@ export function buildPrompt(item) {
 - تاریخ پخش/اکران و استودیو را اگر صریح در متن هست نگه دار؛ تاریخ‌های قدیمی سابقه‌ی اثر را تاریخ پخش جدید معرفی نکن.
 - صفت تبلیغاتی، نام منبع، لینک، هشتگ و Markdown ممنوع. جمله آخر کامل باشد.
 
+${item.leak ? "- این خبر از یک لیکر در X است و هنوز رسمی نیست؛ همین را در جمله اول صریح بگو (مثلاً «طبق لیک‌ها…») و آن را قطعی اعلام نکن.\n" : ""}
 عنوان خبر: ${item.title}
 تاریخ انتشار: ${item.published || ""}
 
@@ -99,4 +100,77 @@ export function escapeHtml(s) {
 export function postCaption(caption, footer) {
   const body = escapeHtml(caption);
   return (footer ? `${body}\n\n${footer}` : body).slice(0, 1024);
+}
+
+// ───────── X (توییتر): منبع‌هایی که url شون «x:هندل» هست ─────────
+export const X_PREFIX = "x:";
+export const isXFeed = (f) => String((f && f.url) || "").startsWith(X_PREFIX);
+export const xHandle = (f) => String(f.url).slice(X_PREFIX.length);
+
+/** «@SugoiLITE» یا «x.com/SugoiLITE» یا «https://twitter.com/SugoiLITE/status/…» → «SugoiLITE» */
+export function parseXHandle(s) {
+  const t = String(s || "").trim();
+  const m = t.match(/^(?:https?:\/\/)?(?:www\.|mobile\.)?(?:x|twitter)\.com\/@?([A-Za-z0-9_]{1,15})(?:[/?#].*)?$/i)
+    || t.match(/^@([A-Za-z0-9_]{1,15})$/);
+  if (!m) return "";
+  return ["home", "i", "search", "explore", "intent", "share"].includes(m[1].toLowerCase()) ? "" : m[1];
+}
+
+const OFFICIAL_MARKERS = ["official announcement", "official confirmation", "officially announced",
+                          "officially confirmed", "✅ official", "confirmed by official"];
+
+function cleanXText(s) {
+  return decodeEntities(String(s || "")).replace(/https?:\/\/t\.co\/[A-Za-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function xItem(handle, id, text, image, published) {
+  const piece = text.length > 180 ? text.slice(0, 177).trimEnd() + "..." : text;
+  return { title: `@${handle}: ${piece}`, link: `https://x.com/${handle}/status/${id}`, summary: text,
+           image: image || "", published: published || "", leak: true };
+}
+
+/** تایم‌لاین عمومی X (syndication) → پست‌ها؛ ریپلای، ریتوییت و پست «رسمی شد» حذف میشن */
+export function parseXSyndication(html, handle) {
+  const m = String(html).match(/<script[^>]+id=["']__NEXT_DATA__["'][^>]*>([\s\S]*?)<\/script>/i);
+  if (!m) throw new Error("X جواب درستی نداد (شاید محدود کرده)");
+  const data = JSON.parse(m[1]);
+  const entries = (((data.props || {}).pageProps || {}).timeline || {}).entries || [];
+  const out = [];
+  for (const e of entries) {
+    if (String(e.type || "").toLowerCase() !== "tweet") continue;
+    const tw = (e.content || {}).tweet || {};
+    const user = String((tw.user || {}).screen_name || handle);
+    if (user.toLowerCase() !== handle.toLowerCase()) continue;
+    const raw = String(tw.full_text || tw.text || "").trim();
+    if (!raw || raw.startsWith("RT @") || raw.startsWith("@") || tw.in_reply_to_status_id_str) continue;
+    const text = cleanXText(raw);
+    if (text.length < 12 || OFFICIAL_MARKERS.some((k) => text.toLowerCase().includes(k))) continue;
+    const id = String(tw.id_str || "");
+    if (!/^\d+$/.test(id)) continue;
+    let image = "";
+    for (const md of tw.mediaDetails || []) {
+      if (md && md.media_url_https) { image = md.media_url_https; if (md.type === "photo") break; }
+    }
+    if (!image) for (const ph of tw.photos || []) if (ph && ph.url) { image = ph.url; break; }
+    out.push(xItem(handle, id, text, image, tw.created_at));
+  }
+  return out;
+}
+
+/** فید RSS یه bridge (مثل Nitter) → همون شکل پست‌های X */
+export function parseXBridge(xml, handle) {
+  const out = [];
+  for (const it of parseFeed(xml)) {
+    const id = (it.link.match(/\/status(?:es)?\/(\d+)/) || [])[1];
+    if (!id || /^(RT by|R to @|RT @)/.test(it.title)) continue;
+    const text = cleanXText(it.summary || it.title);
+    if (text.length < 12 || OFFICIAL_MARKERS.some((k) => text.toLowerCase().includes(k))) continue;
+    let image = it.image || "";
+    if (/nitter|\/pic\//.test(image)) {                        // عکس nitter → لینک مستقیم pbs.twimg.com
+      const pic = decodeURIComponent((image.match(/\/pic\/(?:orig\/)?(.+)$/) || [])[1] || "");
+      image = pic ? "https://pbs.twimg.com/" + pic.replace(/^\/+/, "") : image;
+    }
+    out.push(xItem(handle, id, text, image, it.published));
+  }
+  return out;
 }

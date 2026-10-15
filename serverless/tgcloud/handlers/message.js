@@ -1,7 +1,7 @@
 // پیام‌های ادمین: منوی دکمه‌ای (مثل بات قدیمی). دستورهای / هم هنوز کار می‌کنن.
 import { platform } from "../lib/platform.js";
 import { isAdmin, cfg, setCfg, feeds, collect, admins, pendingNews, resendPreview, DEFAULT_FOOTER } from "../lib/news.js";
-import { escapeHtml } from "../lib/core.js";
+import { escapeHtml, parseXHandle, X_PREFIX } from "../lib/core.js";
 import { B, OLD, mainKeyboard, cancelKeyboard, statusText, feedCard, aiView, adminsView, channelView, footerView,
          setWait, getWait, clearWait, WAIT_PROMPT } from "../lib/menu.js";
 
@@ -88,8 +88,25 @@ async function handleWait(p, msg, uid, wait, raw, send, menu) {
   const again = (t) => send(t, { reply_markup: cancelKeyboard() });   // جواب اشتباه → دوباره بپرس
   switch (wait.kind) {
     case "feed": {
+      const parts = raw.split(/[\s,،]+/).filter(Boolean);
+      const handles = parts.map(parseXHandle);
+      if (parts.length && handles.every(Boolean)) {           // اکانت(های) X
+        const list = await feeds(p);
+        const added = [], dup = [];
+        for (const h of handles) {
+          const url = X_PREFIX + h;
+          if (list.some((f) => f.url.toLowerCase() === url.toLowerCase())) { dup.push(h); continue; }
+          list.push({ name: h, url });
+          added.push(h);
+        }
+        await setCfg(p, "feeds", list);
+        await clearWait(p, uid);
+        return menu((added.length ? `✅ اکانت X اضافه شد: ${added.map((h) => "@" + h).join("، ")}\n` : "") +
+                    (dup.length ? `از قبل بود: ${dup.map((h) => "@" + h).join("، ")}\n` : "") +
+                    "\n🐦 اکانت‌های X هر ۱۵ دقیقه چک میشن؛ فقط پست‌های عکس‌دار، و همیشه به عنوان «غیررسمی/لیک».");
+      }
       const [url, ...name] = raw.split(/\s+/);
-      if (!/^https?:\/\/\S+$/.test(url || "")) return again("❗️ این لینک نیست. لینک RSS رو بفرست (با https شروع میشه).");
+      if (!/^https?:\/\/\S+$/.test(url || "")) return again("❗️ متوجه نشدم. آیدی X رو با @ بفرست (مثل <code>@SugoiLITE</code>) یا لینک RSS سایت رو.");
       const list = await feeds(p);
       if (list.some((f) => f.url === url)) { await clearWait(p, uid); return menu("این منبع از قبل هست."); }
       let label = name.join(" ");
@@ -160,8 +177,10 @@ async function importFeeds(p, raw, menu) {
   const have = new Set(list.map((f) => f.url));
   let added = 0, skipped = 0;
   for (const l of lines) {
-    const [url, ...name] = l.split("|").map((x) => x.trim());
-    if (!/^https?:\/\//.test(url || "") || have.has(url)) { skipped++; continue; }
+    let [url, ...name] = l.split("|").map((x) => x.trim());
+    const xl = (url || "").match(/^special:\/\/xleaker\/@?([A-Za-z0-9_]{1,15})$/i);   // لیکر X بات قدیمی
+    if (xl) url = X_PREFIX + xl[1];
+    if (!(/^https?:\/\//.test(url || "") || xl) || have.has(url)) { skipped++; continue; }
     list.push({ name: name.join(" ") || url, url });
     have.add(url);
     added++;

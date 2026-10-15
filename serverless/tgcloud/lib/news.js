@@ -1,7 +1,7 @@
 // منطق اصلی بات خبری روی Telegram Serverless (کارهای سبک).
 // کارهای سنگین (درست کردن عکسی که تلگرام لینکش رو قبول نمی‌کنه) به صورت «job» برای برنامه‌ی کامپیوتر
 // (serverless_agent.py) می‌مونه؛ تا وقتی کامپیوتر روشن نشده، خبر بدون عکس منتشر نمیشه.
-import { DEFAULT_FEEDS, parseFeed, parseArticle, hashKey, SYSTEM_PROMPT, buildPrompt, extractCaption, postCaption,
+import { DEFAULT_FEEDS, parseFeed, parseArticle, hashKey, isXFeed, xHandle, parseXSyndication, parseXBridge, SYSTEM_PROMPT, buildPrompt, extractCaption, postCaption,
          escapeHtml } from "./core.js";
 
 export const OWNER_ID = 513902877;
@@ -111,14 +111,15 @@ export async function collect(p) {
     if (report.added >= MAX_NEW_PER_RUN) break;
     let items = [];
     const stateKey = "feedstate:" + hashKey(f.url);
+    const prev = await p.kv.get(stateKey);
+    if (isXFeed(f) && prev && Date.now() - prev.at < (prev.wait || X_EVERY_MS)) continue;   // X رو کمتر بپرس که محدود نکنه
     try {
-      const res = await p.fetch(f.url, { headers: { "User-Agent": "Mozilla/5.0 (ARIKO news)" } });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      items = parseFeed(await res.text());
+      items = await fetchItems(p, f);
       await p.kv.set(stateKey, { at: Date.now(), error: items.length ? "" : "هیچ خبری توی فید پیدا نشد" });
     } catch (e) {
       report.errors.push(`${f.name}: ${e.message}`);
-      await p.kv.set(stateKey, { at: Date.now(), error: String(e.message || e).slice(0, 180) });
+      const wait = isXFeed(f) ? Math.min(3 * 3600e3, Math.max(X_EVERY_MS, ((prev && prev.wait) || X_EVERY_MS) * 2)) : 0;
+      await p.kv.set(stateKey, { at: Date.now(), error: String(e.message || e).slice(0, 180), wait });
       continue;
     }
     const first = !(await p.kv.get("feedinit:" + hashKey(f.url)));
@@ -129,6 +130,7 @@ export async function collect(p) {
       if (!first && report.added >= MAX_NEW_PER_RUN) break;  // بقیه برای چک بعدی می‌مونن (گم نمی‌شن)
       await p.kv.set(seenKey, 1);
       if (first) continue;                                    // بار اول فقط علامت‌گذاری (سیل خبرهای قدیمی نیاد)
+      if (it.leak && !it.image) continue;                     // پست X بدون عکس: کامپیوتر هم عکسی براش پیدا نمی‌کنه
       try {
         await addNews(p, f, it);
         report.added++;
@@ -140,13 +142,48 @@ export async function collect(p) {
   return report;
 }
 
+const X_EVERY_MS = 15 * 60 * 1000;                           // هر اکانت X حداکثر هر ۱۵ دقیقه یه بار
+const BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36";
+
+async function fetchItems(p, f) {
+  if (!isXFeed(f)) {
+    const res = await p.fetch(f.url, { headers: { "User-Agent": "Mozilla/5.0 (ARIKO news)" } });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return parseFeed(await res.text());
+  }
+  // X: اول تایم‌لاین عمومی خود X، اگه نشد bridgeها (Nitter و…)
+  const handle = xHandle(f);
+  const errors = [];
+  try {
+    const res = await p.fetch(`https://syndication.twitter.com/srv/timeline-profile/screen-name/${encodeURIComponent(handle)}`,
+                              { headers: { "User-Agent": BROWSER_UA, "Accept": "text/html", "Accept-Language": "en-US,en;q=0.9" } });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const items = parseXSyndication(await res.text(), handle);
+    if (items.length) return items;
+    errors.push("X: پستی برنگردوند");
+  } catch (e) { errors.push(`X: ${e.message}`); }
+  for (const tpl of (await cfg(p, "x_bridges", null)) || ["https://nitter.net/{handle}/rss"]) {
+    try {
+      const res = await p.fetch(tpl.replace("{handle}", encodeURIComponent(handle)), { headers: { "User-Agent": BROWSER_UA } });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const items = parseXBridge(await res.text(), handle);
+      if (items.length) return items;
+      errors.push(`${new URL(tpl.replace("{handle}", "x")).hostname}: پستی برنگردوند`);
+    } catch (e) { errors.push(`bridge: ${e.message}`); }
+  }
+  throw new Error(errors.join(" | "));
+}
+
 async function addNews(p, feed, it) {
   let article = { image: "", text: "" };
-  try {
-    const res = await p.fetch(it.link, { headers: { "User-Agent": "Mozilla/5.0 (ARIKO news)" } });
-    if (res.ok) article = parseArticle(await res.text());
-  } catch (e) { /* صفحه باز نشد؛ همون خلاصه‌ی RSS */ }
-  const item = { title: it.title, link: it.link, published: it.published, summary: it.summary, text: article.text };
+  if (!it.leak) {                                             // پست X صفحه‌ی خبر نداره؛ خود متن پست کافیه
+    try {
+      const res = await p.fetch(it.link, { headers: { "User-Agent": "Mozilla/5.0 (ARIKO news)" } });
+      if (res.ok) article = parseArticle(await res.text());
+    } catch (e) { /* صفحه باز نشد؛ همون خلاصه‌ی RSS */ }
+  }
+  const item = { title: it.title, link: it.link, published: it.published, summary: it.summary, text: article.text,
+                 leak: !!it.leak };
   const { caption, model } = await geminiCaption(p, item);
   const id = hashKey(it.link + Date.now());
   const news = { id, title: it.title, link: it.link, source: feed.name, image: article.image || it.image || "",
