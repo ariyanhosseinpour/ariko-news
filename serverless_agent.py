@@ -453,7 +453,7 @@ def main():
             log(json.dumps(cloud("restore", cfg=json.load(fh)), ensure_ascii=False))
         return
     if "--feedtest" in sys.argv:                                 # کدوم آدرس RSS/فید کار می‌کنه
-        for url in sys.argv[sys.argv.index("--feedtest") + 1].split("|"):
+        for url in sys.argv[sys.argv.index("--feedtest") + 1].replace("feeds:", "", 1).split("|"):
             try:
                 req = urllib.request.Request(url, headers={"User-Agent": BROWSER_UA, "Accept": "application/rss+xml,application/xml,text/xml,*/*"})
                 with urllib.request.urlopen(req, timeout=30) as resp:
