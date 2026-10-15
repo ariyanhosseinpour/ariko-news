@@ -64,7 +64,7 @@ def log(text):
 # ماژول کوچیکی که فقط موقع اجرا فرستاده میشه (deploy نمیشه) و توابع lib/news.js رو صدا می‌زنه
 PC_MODULE = """
 import { platform } from '../lib/platform.js';
-import { parseArticle } from '../lib/core.js';
+import { parseArticle, parseFeed } from '../lib/core.js';
 import db, { like, sql } from 'sdk/db';
 import { kv as kvTable } from '../schema.js';
 import { agentPoll, agentDone, collect, agentUpdates, prefetchPlan, diagnose, recoverLost, clearImageJobs, redoNews } from '../lib/news.js';
@@ -91,6 +91,7 @@ export default async function (input) {
     return out;
   }
   if (input.op === 'dbg') { const out = {}; for (const pre of ['news:', 'job:', 'cfg:', 'feedstate:']) { try { const r = await p.kv.list(pre); out[pre] = r.length + ' rows, ' + JSON.stringify(r).length + ' bytes'; } catch (e) { out[pre] = 'ERR ' + e.message; } } return out; }
+  if (input.op === 'parsefeed') { const it = parseFeed(input.xml || ''); return { count: it.length, first: it.slice(0, 3).map((x) => x.title) }; }
   if (input.op === 'parse') { const a = parseArticle(input.html || ''); return { images: a.images, videos: a.videos, image: a.image }; }
   if (input.op === 'redo') return await redoNews(p, input.words || []);
   if (input.op === 'clearjobs') return await clearImageJobs(p);
@@ -450,6 +451,22 @@ def main():
     if "--restore" in sys.argv:                                  # تنظیمات بات از فایل restore.json
         with open(os.path.join(BASE_DIR, "restore.json"), encoding="utf-8") as fh:
             log(json.dumps(cloud("restore", cfg=json.load(fh)), ensure_ascii=False))
+        return
+    if "--feedtest" in sys.argv:                                 # کدوم آدرس RSS/فید کار می‌کنه
+        for url in sys.argv[sys.argv.index("--feedtest") + 1].split("|"):
+            try:
+                req = urllib.request.Request(url, headers={"User-Agent": BROWSER_UA, "Accept": "application/rss+xml,application/xml,text/xml,*/*"})
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    body = resp.read(3_000_000).decode("utf-8", "ignore")
+                    ctype = resp.headers.get("content-type", "")
+                r = cloud("parsefeed", xml=body[:1_500_000])
+                extra = ""
+                m = re.search(r'"(?:externalId|channelId)":"(UC[\w-]{20,})"', body)
+                if m:
+                    extra = f" channel_id={m.group(1)}"
+                log(f"✅ {url} [{ctype[:30]}] items={r.get('count')}{extra} :: {r.get('first')}")
+            except Exception as exc:
+                log(f"❌ {url} :: {str(exc)[:120]}")
         return
     if "--dbg" in sys.argv:
         log(json.dumps(cloud("dbg"), ensure_ascii=False))
