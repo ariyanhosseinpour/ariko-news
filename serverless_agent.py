@@ -300,7 +300,13 @@ def main():
         end = time.time() + minutes * 60
         while True:
             if os.environ.get("GITHUB_ACTIONS"):                    # کد جدید push شده باشه، همین الان استفاده بشه
+                me = os.path.abspath(__file__)
+                before = os.path.getmtime(me)
                 os.system("git pull -q --ff-only >/dev/null 2>&1")
+                if os.path.getmtime(me) != before:                    # خود این برنامه عوض شد → با بقیه‌ی وقت از نو
+                    left = max(0, int((end - time.time()) / 60))
+                    log("🔄 کد جدید؛ اجرای دوباره")
+                    os.execv(sys.executable, [sys.executable, me, "--loop", str(left)])
             try:
                 r = collect_now()
                 log(f"checked={r.get('checked')} added={r.get('added')} low={r.get('low', 0)} "

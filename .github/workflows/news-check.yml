@@ -1,0 +1,18 @@
+name: news-check
+# یه بار چک دستی خبرها (برای عیب‌یابی؛ لاگش فوری دیده میشه). چک دائمی کار news-tick هست.
+on:
+  workflow_dispatch:
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: check news once
+        env:
+          TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_TOKEN }}
+          X_AUTH_TOKEN: ${{ secrets.X_AUTH_TOKEN }}
+        run: python serverless_agent.py --tick
