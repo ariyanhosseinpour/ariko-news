@@ -65,6 +65,8 @@ def log(text):
 PC_MODULE = """
 import { platform } from '../lib/platform.js';
 import { parseArticle } from '../lib/core.js';
+import db, { like, sql } from 'sdk/db';
+import { kv as kvTable } from '../schema.js';
 import { agentPoll, agentDone, collect, agentUpdates, prefetchPlan, diagnose, recoverLost, clearImageJobs, redoNews } from '../lib/news.js';
 export default async function (input) {
   const p = platform();
@@ -72,7 +74,7 @@ export default async function (input) {
   if (input.op === 'done') return await agentDone(p, input.result || {});
   if (input.op === 'collect') return await collect(p, input.prefetched || null);
   if (input.op === 'dbg2') {
-    const db = (await import('sdk/db')).default; const { like, eq, sql } = await import('sdk/db'); const { kv } = await import('../schema.js');
+    const kv = kvTable;
     const out = {}; const t = async (name, f) => { try { const r = await f(); out[name] = JSON.stringify(r).slice(0, 200); } catch (e) { out[name] = 'ERR ' + e.message; } };
     await t('get', () => p.kv.get('cfg:channel'));
     await t('set', () => p.kv.set('cfg:dbgtest', Date.now()));
