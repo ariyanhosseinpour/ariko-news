@@ -1,0 +1,26 @@
+name: deploy
+on:
+  push:
+    branches: [main]
+    paths: ["serverless/tgcloud/**"]
+  workflow_dispatch:
+concurrency:
+  group: deploy
+jobs:
+  push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: serverless
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: deploy to Telegram Serverless
+        env:
+          TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_TOKEN }}
+        run: |
+          mkdir -p .tgcloud
+          npx -y @tgcloud/cli@0.2.0 push --force
