@@ -308,3 +308,31 @@ export function guessAnimeName(title) {
   const name = (cut > 0 ? t.slice(0, cut) : t).replace(/^(?:The\s+)?(?:New|Leak|Rumou?r|Report|Breaking)\s*:?\s*/i, "").trim();
   return name.length >= 3 && name.split(/\s+/).length <= 8 ? name : "";
 }
+
+/** ابعاد عکس از چند کیلوبایت اولش (JPEG/PNG/WebP/GIF)؛ نشد → null */
+export function imageSize(b) {
+  if (!b || b.length < 24) return null;
+  const u16 = (i) => (b[i] << 8) | b[i + 1], le16 = (i) => b[i] | (b[i + 1] << 8);
+  const u32 = (i) => ((b[i] << 24) | (b[i + 1] << 16) | (b[i + 2] << 8) | b[i + 3]) >>> 0;
+  if (b[0] === 0x89 && b[1] === 0x50) return { w: u32(16), h: u32(20) };                       // PNG
+  if (b[0] === 0x47 && b[1] === 0x49) return { w: le16(6), h: le16(8) };                       // GIF
+  if (b[0] === 0x52 && b[1] === 0x49 && b[8] === 0x57 && b[9] === 0x45) {                      // WebP
+    const kind = String.fromCharCode(b[12], b[13], b[14], b[15]);
+    if (kind === "VP8 ") return { w: le16(26) & 0x3fff, h: le16(28) & 0x3fff };
+    if (kind === "VP8L") { const v = b[21] | (b[22] << 8) | (b[23] << 16) | (b[24] << 24);
+                           return { w: (v & 0x3fff) + 1, h: ((v >> 14) & 0x3fff) + 1 }; }
+    if (kind === "VP8X") return { w: 1 + (b[24] | (b[25] << 8) | (b[26] << 16)), h: 1 + (b[27] | (b[28] << 8) | (b[29] << 16)) };
+    return null;
+  }
+  if (b[0] === 0xff && b[1] === 0xd8) {                                                        // JPEG
+    let i = 2;
+    while (i + 9 < b.length) {
+      if (b[i] !== 0xff) { i++; continue; }
+      const m = b[i + 1];
+      if (m >= 0xc0 && m <= 0xcf && m !== 0xc4 && m !== 0xc8 && m !== 0xcc) return { w: u16(i + 7), h: u16(i + 5) };
+      if (m === 0xd8 || m === 0x01 || (m >= 0xd0 && m <= 0xd7)) { i += 2; continue; }
+      i += 2 + u16(i + 2);
+    }
+  }
+  return null;
+}

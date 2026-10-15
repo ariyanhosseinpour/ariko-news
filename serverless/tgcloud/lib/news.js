@@ -4,7 +4,7 @@
 import { AGENT_SYSTEM, agentUserPrompt, parseJson, validate, releasePlausible, localizeDate, renderCaption,
          FACT_SYSTEM, factUserPrompt, validateFact, renderFactCaption } from "./caption.js";
 import { DEFAULT_FEEDS, FACT_FEEDS, importance, eventType, guessAnimeName, DEFAULT_MIN_IMPORTANCE, parseFeed, parseArticle, hashKey, isXFeed, xHandle, parseXSyndication, parseXBridge, SYSTEM_PROMPT, buildPrompt, extractCaption, postCaption,
-         escapeHtml } from "./core.js";
+         escapeHtml, imageSize } from "./core.js";
 
 export const OWNER_ID = 513902877;
 const MAX_NEW_PER_RUN = 3;                                  // هر بار چک (هر ۵ دقیقه) حداکثر ۳ خبر جدید؛ سبک بمونه
@@ -512,7 +512,8 @@ async function addNews(p, feed, it) {
     news.spoiler = true;
   } else if (VISUAL_TYPES.includes(item.eventType) || /\b(?:visual|poster)s?\b/i.test(it.title)) {
     // خبر پوستر/ویژوال: خود عکس‌های داخل مقاله (پوستر واقعی)، نه عکس بندانگشتی صفحه
-    const imgs = (article.images || []).filter((u) => !GENERIC_IMAGE.test(u)).slice(0, 4);
+    // فقط خود پوستر (عکس عمودی)؛ اسکرین‌شات‌ها و عکس‌های افقیِ دیگه حذف
+    const imgs = await posterImages(p, (article.images || []).filter((u) => !GENERIC_IMAGE.test(u)).slice(0, 6), it.link);
     if (imgs.length) { news.images = imgs; news.image = imgs[0]; }
   }
   const trailerNews = TRAILER_TYPES.includes(item.eventType) || /\b(?:trailer|teaser|pv)\b/i.test(it.title);
@@ -535,6 +536,35 @@ async function addNews(p, feed, it) {
   await p.kv.set("news:" + id, news);
   await preview(p, news);
   return "ok";
+}
+
+/** از بین عکس‌های مقاله فقط پوسترها (عمودی)؛ هیچ‌کدوم عمودی نبود → فقط عکس اول */
+async function posterImages(p, urls, referer) {
+  if (urls.length <= 1) return urls;
+  const sizes = await Promise.all(urls.map(async (u) => {
+    try {
+      const res = await p.fetch(u, { headers: { "User-Agent": "Mozilla/5.0", "Referer": referer, "Range": "bytes=0-131071" } });
+      if (!res.ok) return null;
+      return imageSize(await headBytes(res, 131072));
+    } catch (e) { return null; }
+  }));
+  const posters = urls.filter((u, i) => sizes[i] && sizes[i].h >= sizes[i].w * 1.15);
+  return posters.length ? posters.slice(0, 4) : urls.slice(0, 1);
+}
+
+/** فقط n بایت اول بدنه (برای خوندن ابعاد عکس) */
+async function headBytes(res, n) {
+  const parts = [];
+  let size = 0;
+  for await (const chunk of res.body) {
+    parts.push(chunk);
+    size += chunk.length;
+    if (size >= n) break;
+  }
+  const out = new Uint8Array(size);
+  let off = 0;
+  for (const c of parts) { out.set(c, off); off += c.length; }
+  return out;
 }
 
 const TRAILER_TYPES = ["trailer", "trailer_visual", "character_pv"];
