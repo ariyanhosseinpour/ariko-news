@@ -341,6 +341,7 @@ def main():
     if "--diagnose" in sys.argv:                                 # عیب‌یابی: خبرهای الان هر فید + دیده‌شده؟ + امتیاز
         r = cloud("diagnose", prefetched=prefetch())
         log(f"min_importance={r.get('minImp')}")
+        log(f"Gemini: {r.get('gemini')}")
         for it in r.get("items") or []:
             if it.get("error"):
                 log(f"[{it['src']}] ⚠️ {it['error']}")

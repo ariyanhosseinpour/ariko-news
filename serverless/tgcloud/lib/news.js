@@ -82,25 +82,38 @@ export async function geminiCaption(p, item) {
   const key = await cfg(p, "gemini_key", "");
   if (!key) throw new Error("کلید Gemini ثبت نشده (/setgemini)");
   const models = [await cfg(p, "model", ""), ...DEFAULT_MODELS].filter(Boolean);
-  let lastErr = "";
+  const errors = [];
   for (const model of [...new Set(models)]) {
-    const res = await p.fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
-        contents: [{ role: "user", parts: [{ text: buildPrompt(item) }] }],
-        generationConfig: { temperature: 0.1, maxOutputTokens: 900 },
-      }),
-    });
-    if (!res.ok) { lastErr = `${model}: HTTP ${res.status}`; continue; }
-    const data = await res.json();
-    const raw = ((data.candidates || [])[0]?.content?.parts || []).map(x => x.text || "").join("");
-    const cap = extractCaption(raw);
-    if (cap) return { caption: cap, model };
-    lastErr = `${model}: کپشن خالی`;
+    // مثل بات قدیمی: «فکر کردن» کم، و اگه جواب نصفه موند با سقف بیشتر دوباره
+    for (const [budget, thinking] of [[2048, true], [6000, true], [6000, false]]) {
+      const generationConfig = { temperature: 0.1, maxOutputTokens: budget };
+      if (thinking) generationConfig.thinkingConfig = { thinkingLevel: "low" };
+      let res;
+      try {
+        res = await p.fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-goog-api-key": key },
+          body: JSON.stringify({ systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+                                 contents: [{ role: "user", parts: [{ text: buildPrompt(item) }] }], generationConfig }),
+        });
+      } catch (e) { errors.push(`${model}: ${e.message}`); break; }
+      if (!res.ok) {
+        let msg = "";
+        try { msg = ((await res.json()).error || {}).message || ""; } catch (e) { /* */ }
+        if (res.status === 400 && /thinking/i.test(msg) && thinking) continue;   // این مدل thinkingConfig رو نمی‌شناسه
+        errors.push(`${model}: HTTP ${res.status} ${msg.slice(0, 80)}`);
+        break;                                                  // 404 (مدل نیست) / 429 / 5xx → مدل بعدی
+      }
+      const data = await res.json();
+      const cand = (data.candidates || [])[0] || {};
+      const raw = ((cand.content || {}).parts || []).filter((x) => !x.thought).map((x) => x.text || "").join("");
+      const cap = extractCaption(raw);
+      if (cap) return { caption: cap, model };
+      errors.push(`${model}: کپشن خالی (${cand.finishReason || "?"})`);
+      if (cand.finishReason !== "MAX_TOKENS") break;
+    }
   }
-  throw new Error(lastErr || "Gemini جواب نداد");
+  throw new Error(errors.slice(-3).join(" | ") || "Gemini جواب نداد");
 }
 
 // ───────── جمع‌آوری خبر ─────────
@@ -191,7 +204,13 @@ export async function diagnose(p, pre = null) {
                  score: imp.score, pass: imp.score >= minImp, published: it.published || "" });
     }
   }
-  return { minImp, init: true, items: out };
+  let gemini = "";
+  try {
+    const sample = out.find((x) => x.pass) || out.find((x) => x.title);
+    const r = await geminiCaption(p, { title: sample ? sample.title : "Test anime gets season 2", summary: "", text: "" });
+    gemini = `✅ ${r.model}: ${r.caption.slice(0, 120)}`;
+  } catch (e) { gemini = `❌ ${e.message}`; }
+  return { minImp, gemini, items: out };
 }
 
 // ───────── محبوبیت انیمه از AniList (کش ۷ روزه) ─────────
