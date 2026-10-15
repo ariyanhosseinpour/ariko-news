@@ -3,14 +3,17 @@ import { platform } from "../lib/platform.js";
 import { isAdmin, cfg, setCfg, feeds, collect, admins } from "../lib/news.js";
 import { escapeHtml } from "../lib/core.js";
 
+const OLD_BUTTONS = { "📡 منابع News V2": "/feeds", "➕ افزودن منبع خبری": "/addfeed" };
+
 export default async function (msg, ctx) {
   const p = platform();
   const uid = msg.from && msg.from.id;
-  const text = (msg.text || "").trim();
+  let text = (msg.text || "").trim();
+  if (OLD_BUTTONS[text]) text = OLD_BUTTONS[text];             // دکمه‌های کیبورد بات قدیمی
   if (!uid || !text.startsWith("/") || !(await isAdmin(p, uid))) return;
   const [cmd, ...rest] = text.split(/\s+/);
   const arg = rest.join(" ").trim();
-  const reply = (t) => p.api("sendMessage", { chat_id: msg.chat.id, text: t, parse_mode: "HTML", disable_web_page_preview: true });
+  const reply = (t, extra = {}) => p.api("sendMessage", { chat_id: msg.chat.id, text: t, parse_mode: "HTML", disable_web_page_preview: true, ...extra });
 
   switch (cmd.split("@")[0]) {
     case "/start":
@@ -26,7 +29,8 @@ export default async function (msg, ctx) {
         (last ? `⏱ آخرین چک: ${Math.round((Date.now() - last.at) / 60000)} دقیقه پیش — ${last.added} خبر جدید` : "⏱ هنوز چک نشده") +
         "\n\n/check — همین الان خبرها رو چک کن\n/setgemini کلید — کلید Gemini\n/setmodel مدل\n/setchannel @کانال\n" +
         "/footer متن — امضای پایین پست\n/feeds — لیست منبع‌ها\n/addfeed لینک‌RSS اسم\n/delfeed شماره\n" +
-        "/addadmin آیدی‌عددی");
+        "/importfeeds — منبع‌های بات قدیمی\n/addadmin آیدی‌عددی",
+        { reply_markup: { remove_keyboard: true } });               // کیبورد بات قدیمی رو برمی‌داره
     }
     case "/setgemini":
       if (!arg) return reply("کلید رو بعد از دستور بنویس: /setgemini AIza...");
@@ -45,7 +49,13 @@ export default async function (msg, ctx) {
       return reply("✅ امضای پایین پست عوض شد.");
     case "/feeds": {
       const list = await feeds(p);
-      return reply("🗞 منبع‌ها:\n" + list.map((f, i) => `${i + 1}. ${escapeHtml(f.name)}\n   ${escapeHtml(f.url)}`).join("\n"));
+      let out = "🗞 منبع‌ها:";
+      for (const [i, f] of list.entries()) {                   // پیام تلگرام حداکثر ۴۰۹۶ حرفه؛ تیکه‌تیکه
+        const line = `\n${i + 1}. ${escapeHtml(f.name)}\n   ${escapeHtml(f.url)}`;
+        if (out.length + line.length > 3800) { await reply(out); out = ""; }
+        out += line;
+      }
+      return reply(out + "\n\nحذف: /delfeed شماره");
     }
     case "/addfeed": {
       const [url, ...name] = rest;
@@ -54,6 +64,23 @@ export default async function (msg, ctx) {
       list.push({ name: name.join(" ") || url, url });
       await setCfg(p, "feeds", list);
       return reply("✅ اضافه شد.");
+    }
+    case "/importfeeds": {
+      // هر خط: لینک | اسم   (خروجی export_feeds.py از دیتابیس بات قدیمی)
+      const lines = text.split("\n").slice(1).map((l) => l.trim()).filter(Boolean);
+      if (!lines.length) return reply("متن فایل feeds_import.txt رو (که export_feeds.py ساخت) همین‌جا بفرست.");
+      const list = await feeds(p);
+      const have = new Set(list.map((f) => f.url));
+      let added = 0, skipped = 0;
+      for (const l of lines) {
+        const [url, ...name] = l.split("|").map((x) => x.trim());
+        if (!/^https?:\/\//.test(url || "") || have.has(url)) { skipped++; continue; }
+        list.push({ name: name.join(" ") || url, url });
+        have.add(url);
+        added++;
+      }
+      await setCfg(p, "feeds", list);
+      return reply(`✅ ${added} منبع اضافه شد${skipped ? ` (${skipped} تا تکراری/نامعتبر بود)` : ""}. الان ${list.length} منبع داری (/feeds).`);
     }
     case "/delfeed": {
       const list = await feeds(p);
