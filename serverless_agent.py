@@ -150,7 +150,7 @@ def _sources():
     if remote:
         out = {k[len("serverless/tgcloud/"):-3]: v for k, v in remote.items() if k.startswith("serverless/tgcloud/")}
         out["endpoints/pc_agent"] = PC_MODULE
-        return out
+        return _with_secrets(out)
     root = os.path.join(PROJECT, "tgcloud")
     if not os.path.isdir(root):
         sys.exit(f"پوشه‌ی پروژه پیدا نشد: {root} (TGCLOUD_PROJECT رو درست کن)")
@@ -163,6 +163,14 @@ def _sources():
                 with open(full, encoding="utf-8") as fh:
                     out[mod] = fh.read()
     out["endpoints/pc_agent"] = PC_MODULE
+    return _with_secrets(out)
+
+
+def _with_secrets(out):
+    """پایگاه‌داده‌ی جایگزین (Upstash) از .env / Secrets → همون ماژولی که نسخه‌ی نصب‌شده داره"""
+    url, token = os.environ.get("UPSTASH_URL", "").strip(), os.environ.get("UPSTASH_TOKEN", "").strip()
+    if url and token:
+        out["lib/secrets"] = f"export const UPSTASH_URL = {json.dumps(url)};\nexport const UPSTASH_TOKEN = {json.dumps(token)};\n"
     return out
 
 

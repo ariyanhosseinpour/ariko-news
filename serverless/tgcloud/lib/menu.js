@@ -1,5 +1,6 @@
 // منوی دکمه‌ای بات (مثل بات قدیمی): کیبورد پایین صفحه + دکمه‌های شیشه‌ای.
 import { cfg, feeds, admins, pendingNews, OWNER_ID, RANK_SOURCES, recentDecisions } from "./news.js";
+import { storageName } from "./platform.js";
 import { escapeHtml, hashKey, isXFeed, xHandle, IMPORTANCE_LEVELS, DEFAULT_MIN_IMPORTANCE } from "./core.js";
 
 export const B = {
@@ -64,6 +65,7 @@ export async function statusText(p) {
     `🖥 برنامه‌ی کامپیوتر: ${Date.now() - seen < 120000 ? "✅ روشن" : "⚪️ خاموش (فقط برای درست کردن عکس لازمه)"}\n` +
     (last ? `⏱ آخرین بررسی: ${Math.round((Date.now() - last.at) / 60000)} دقیقه پیش — ${last.added} خبر جدید`
           : "⏱ هنوز بررسی نشده") +
+    `\n💾 پایگاه‌داده: ${storageName()}` +
     "\n\n✅ انتشار فقط بعد از تأیید ادمین";
 }
 

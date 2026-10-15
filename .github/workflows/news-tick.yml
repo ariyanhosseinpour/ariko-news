@@ -28,6 +28,8 @@ jobs:
         env:
           TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_TOKEN }}
           X_AUTH_TOKEN: ${{ secrets.X_AUTH_TOKEN }}
+          UPSTASH_URL: ${{ secrets.UPSTASH_URL }}
+          UPSTASH_TOKEN: ${{ secrets.UPSTASH_TOKEN }}
         run: python serverless_agent.py --loop ${{ inputs.minutes || '330' }}
       - name: start the next run
         if: always()

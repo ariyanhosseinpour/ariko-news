@@ -21,7 +21,12 @@ jobs:
       - name: deploy to Telegram Serverless
         env:
           TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_TOKEN }}
+          UPSTASH_URL: ${{ secrets.UPSTASH_URL }}
+          UPSTASH_TOKEN: ${{ secrets.UPSTASH_TOKEN }}
         run: |
           mkdir -p .tgcloud
+          # پایگاه‌داده‌ی جایگزین (اگه توی Secrets گذاشته شده) → فقط توی نسخه‌ی نصب‌شده، نه توی ریپو
+          node -e 'const e=process.env; require("fs").writeFileSync("tgcloud/lib/secrets.js", `export const UPSTASH_URL = ${JSON.stringify(e.UPSTASH_URL||"")};\nexport const UPSTASH_TOKEN = ${JSON.stringify(e.UPSTASH_TOKEN||"")};\n`)'
+
           # کد + فایل schema (migrate اجرا نمیشه؛ دیتابیس دست نمی‌خوره)
           npx -y @tgcloud/cli@0.2.0 push tgcloud/schema.js tgcloud/handlers tgcloud/lib --force
