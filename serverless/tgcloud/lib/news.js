@@ -446,8 +446,14 @@ async function addNews(p, feed, it) {
                  anime: out.animeTitle || guessAnimeName(it.title),
                  created: Date.now(), importance: it.importance, summary: String(it.summary || "").slice(0, 1500),
                  published: it.published || "" };
-  // خبر پوستر/ویژوال: خود عکس‌های داخل مقاله (پوستر واقعی)، نه عکس بندانگشتی صفحه
-  if (VISUAL_TYPES.includes(item.eventType) || /\b(?:visual|poster)s?\b/i.test(it.title)) {
+  // پیش‌نمایش قسمت: همه‌ی عکس‌های پیش‌نمایش داخل مقاله، به‌صورت اسپویلر
+  const episodePreview = /\bepisode\s+\d+\b[^.]{0,60}\bpreview|\bpreview\b[^.]{0,60}\bepisode\s+\d+/i.test(it.title);
+  if (episodePreview && (article.images || []).length) {
+    news.images = article.images.filter((u) => !GENERIC_IMAGE.test(u)).slice(0, 10);
+    news.image = news.images[0] || news.image;
+    news.spoiler = true;
+  } else if (VISUAL_TYPES.includes(item.eventType) || /\b(?:visual|poster)s?\b/i.test(it.title)) {
+    // خبر پوستر/ویژوال: خود عکس‌های داخل مقاله (پوستر واقعی)، نه عکس بندانگشتی صفحه
     const imgs = (article.images || []).filter((u) => !GENERIC_IMAGE.test(u)).slice(0, 4);
     if (imgs.length) { news.images = imgs; news.image = imgs[0]; }
   }
@@ -577,7 +583,7 @@ async function ensurePhotoIds(p, news) {
 function mediaList(news) {
   const items = [];
   if (news.video_file_id) items.push({ type: "video", media: news.video_file_id, supports_streaming: true });
-  for (const id of news.photo_ids || []) items.push({ type: "photo", media: id });
+  for (const id of news.photo_ids || []) items.push({ type: "photo", media: id, ...(news.spoiler ? { has_spoiler: true } : {}) });
   return items;
 }
 
@@ -602,7 +608,8 @@ async function sendPreviewTo(p, chat, news) {
     return p.api("sendVideo", { chat_id: chat, video: news.video_file_id, caption, parse_mode: "HTML",
                                 supports_streaming: true, reply_markup: kb });
   }
-  return sendPhotoSmart(p, { chat_id: chat, photo: news.file_id || news.image, caption, parse_mode: "HTML", reply_markup: kb }, news);
+  return sendPhotoSmart(p, { chat_id: chat, photo: news.file_id || news.image, caption, parse_mode: "HTML", reply_markup: kb,
+                             ...(news.spoiler ? { has_spoiler: true } : {}) }, news);
 }
 
 export async function preview(p, news) {
@@ -671,7 +678,7 @@ export async function publish(p, id) {
   const photo = news.file_id || news.image;
   if (!photo) { await needImage(p, news, "عکسی برای این خبر نیست", "post"); return "عکس لازم داره؛ سیستم رو روشن کن"; }
   try {
-    await sendPhotoSmart(p, { chat_id: channel, photo, caption, parse_mode: "HTML" }, news);
+    await sendPhotoSmart(p, { chat_id: channel, photo, caption, parse_mode: "HTML", ...(news.spoiler ? { has_spoiler: true } : {}) }, news);
   } catch (e) {
     await needImage(p, news, `فرستادن عکس به کانال نشد: ${String(e.description || e.message || e).slice(0, 120)}`, "post");
     return "عکس لازم داره؛ سیستم رو روشن کن";

@@ -84,7 +84,7 @@ export function articleImages(html) {
     if (!/^https?:\/\//.test(src) || /\.(?:svg|gif)(?:\?|$)/i.test(src) || BAD_IMG.test(src)) continue;
     if ((w && w < 300) || (h && h < 300)) continue;
     if (!out.includes(src)) out.push(src);
-    if (out.length >= 6) break;
+    if (out.length >= 10) break;
   }
   return out;
 }

@@ -64,12 +64,14 @@ def log(text):
 # ماژول کوچیکی که فقط موقع اجرا فرستاده میشه (deploy نمیشه) و توابع lib/news.js رو صدا می‌زنه
 PC_MODULE = """
 import { platform } from '../lib/platform.js';
+import { parseArticle } from '../lib/core.js';
 import { agentPoll, agentDone, collect, agentUpdates, prefetchPlan, diagnose, recoverLost, clearImageJobs, redoNews } from '../lib/news.js';
 export default async function (input) {
   const p = platform();
   if (input.op === 'poll') return { jobs: await agentPoll(p), updates: await agentUpdates(p) };
   if (input.op === 'done') return await agentDone(p, input.result || {});
   if (input.op === 'collect') return await collect(p, input.prefetched || null);
+  if (input.op === 'parse') { const a = parseArticle(input.html || ''); return { images: a.images, videos: a.videos, image: a.image }; }
   if (input.op === 'redo') return await redoNews(p, input.words || []);
   if (input.op === 'clearjobs') return await clearImageJobs(p);
   if (input.op === 'recover') return await recoverLost(p, input.prefetched || null);
@@ -429,6 +431,10 @@ def main():
         url = sys.argv[sys.argv.index("--probe") + 1]
         html = urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": BROWSER_UA}), timeout=40).read().decode("utf-8", "ignore")
         log(f"len={len(html)}")
+        r = cloud("parse", html=html[:1_500_000])
+        log(f"og={r.get('image')}\nvideos={r.get('videos')}")
+        for u in r.get("images") or []:
+            log(f"   🖼 {u}")
         for pat in (r"youtube[^\s\"'<>]{0,80}", r"youtu\.be/[^\s\"'<>]{0,20}", r"lite-youtube[^>]{0,120}", r"data-(?:video-)?id=[\"'][^\"']{6,20}", r"<iframe[^>]{0,200}"):
             for m in list(dict.fromkeys(re.findall(pat, html)))[:8]:
                 log(f"   {m}")
