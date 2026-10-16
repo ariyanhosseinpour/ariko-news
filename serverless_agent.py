@@ -488,11 +488,19 @@ def main():
     if "--probe" in sys.argv:                                    # عیب‌یابی: یه صفحه‌ی خبر چه ویدیو/عکسی داره
         url = sys.argv[sys.argv.index("--probe") + 1]
         html = urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": BROWSER_UA}), timeout=40).read().decode("utf-8", "ignore")
+        if "<rss" in html[:500] or "<feed" in html[:500]:          # فید → اولین خبرش
+            m = re.search(r"<item>.*?<link>\s*([^<\s]+)", html, re.S)
+            if m:
+                url = m.group(1)
+                log(f"article={url}")
+                html = urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": BROWSER_UA}), timeout=40).read().decode("utf-8", "ignore")
         log(f"len={len(html)}")
         r = cloud("parse", html=html[:1_500_000])
         log(f"og={r.get('image')}\nvideos={r.get('videos')}")
         for u in r.get("images") or []:
             log(f"   🖼 {u}")
+        for m in list(dict.fromkeys(re.findall(r"<img\b[^>]*>", html)))[:40]:
+            log(f"   <img> {m[:260]}")
         for pat in (r"youtube[^\s\"'<>]{0,80}", r"youtu\.be/[^\s\"'<>]{0,20}", r"lite-youtube[^>]{0,120}", r"data-(?:video-)?id=[\"'][^\"']{6,20}", r"<iframe[^>]{0,200}"):
             for m in list(dict.fromkeys(re.findall(pat, html)))[:8]:
                 log(f"   {m}")
