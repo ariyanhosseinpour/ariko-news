@@ -346,6 +346,25 @@ _old_bot = None
 import threading
 _old_bot_lock = threading.Lock()
 
+# ───────── اولویت با ادیت پست اینستاگرام: دانلود/آپلود تریلر صبر می‌کنه ─────────
+INSTA_WINDOW = 300                                              # تا ۵ دقیقه بعد از آخرین دکمه‌ی ادیت، «در حال ادیت»
+PAUSE = {"insta_at": 0, "hit": ""}
+
+
+def insta_active():
+    return time.time() - PAUSE["insta_at"] < INSTA_WINDOW
+
+
+class Paused(Exception):
+    pass
+
+
+def _pause_hook(d):
+    """yt-dlp وسط دانلود: اگه ادیت شروع شد، دانلود قطع میشه (بعداً دوباره)"""
+    if d.get("status") == "downloading" and insta_active():
+        PAUSE["hit"] = "download"
+        raise Paused("ادیت پست اینستاگرام")
+
 
 def old_bot():
     """کد بات قدیمی (news.py کنار همین فایل) فقط به‌عنوان کتابخونه؛ خود بات قدیمی اجرا (polling) نمیشه."""
@@ -373,6 +392,13 @@ def _load_old_bot():
                     t = t.replace(best, f"[{best}]", 1)
             return t
         mod._insta_clean_title = clean_title
+        orig_opts = mod._trailer_ydl_opts
+
+        def opts_with_pause(height):
+            o = orig_opts(height)
+            o.setdefault("progress_hooks", []).append(_pause_hook)
+            return o
+        mod._trailer_ydl_opts = opts_with_pause
         try:                                                      # آپلود کاور/PSD با اینترنت کند: وقت بیشتر + تلاش دوباره
             from telebot import apihelper
             apihelper.CONNECT_TIMEOUT = 30
@@ -590,6 +616,9 @@ def handle_trailer(job):
         try:
             path = mod._trailer_download(url, height)
             send_path, vmeta = mod._trailer_prepare(path)
+            if insta_active():                                      # آپلود بعد از تموم شدن ادیت
+                PAUSE["hit"] = "upload"
+                raise Paused("ادیت پست اینستاگرام")
             with open(send_path, "rb") as fh:                        # آپلود بی‌صدا؛ سرور پیش‌نمایش اصلی (با پوسترها) رو می‌سازه
                 msg = mod._send_video_with_meta(int(job["chat_id"]), fh, vmeta, caption="🎬 در حال آماده‌سازی تریلر…",
                                                 disable_notification=True, supports_streaming=True)
@@ -601,6 +630,64 @@ def handle_trailer(job):
             if path:
                 mod._trailer_cleanup(path)
     raise RuntimeError(f"حجم تریلر حتی با کیفیت پایین هم از ۵۰ مگ بیشتره ({too_big})")
+
+
+def html_escape(t):
+    return str(t).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _notify(chat_id, text):
+    try:
+        data = urllib.parse.urlencode({"chat_id": chat_id, "text": text, "parse_mode": "HTML"}).encode()
+        urllib.request.urlopen(f"https://api.telegram.org/bot{TOKEN}/sendMessage", data=data, timeout=30).read()
+    except Exception as exc:
+        log(f"   ⚠️ پیام نرفت: {exc}")
+
+
+def _job_label(job):
+    kind = job.get("type")
+    if kind == "trailer":
+        return f"تریلر «{html_escape(str(job.get('anime') or job.get('title') or '')[:80])}»"
+    if kind == "rank":
+        return f"کارت رنکینگ {html_escape(str(job.get('source') or ''))}"
+    return f"عکس خبر {html_escape(str(job.get('news_id') or ''))}"
+
+
+def run_job(job):
+    """یه کار (تریلر/رنکینگ/عکس)؛ وقتی ادیت اینستاگرام در جریانه صبر می‌کنه و یه بار خبر میده"""
+    kind = job.get("type")
+    handler = {"rank": handle_rank, "trailer": handle_trailer}.get(kind, handle)
+    told = False
+    while True:
+        if insta_active():
+            if not told and kind == "trailer":
+                _notify(job.get("chat_id"), f"⏸ دانلود {_job_label(job)} متوقف شد تا ادیت پست اینستاگرام تموم بشه؛ بعدش خودش ادامه میده.")
+                told = True
+            while insta_active():
+                time.sleep(3)
+        PAUSE["hit"] = ""
+        log({"trailer": f"🎬 تریلر: {str(job.get('title', ''))[:60]} …",
+             "rank": f"📊 ساخت کارت رنکینگ {job.get('source')} …"}.get(kind, f"🖼 درست کردن عکس خبر {job.get('news_id')} …"))
+        try:
+            fid = handler(job)
+        except Exception as exc:
+            if PAUSE["hit"]:                                        # به‌خاطر ادیت قطع شد → بعداً دوباره
+                stage = "آپلود" if PAUSE["hit"] == "upload" else "دانلود"
+                log(f"   ⏸ {stage} متوقف شد (ادیت اینستاگرام)")
+                if not told:
+                    _notify(job.get("chat_id"), f"⏸ {stage} {_job_label(job)} متوقف شد تا ادیت پست اینستاگرام تموم بشه؛ بعدش خودش ادامه میده.")
+                    told = True
+                continue
+            cloud("done", result={"job_id": job["id"], "ok": False, "error": str(exc)[:300]})
+            log(f"   ❌ {exc}")
+            return
+        extra = fid if isinstance(fid, dict) else {"file_id": fid}
+        try:                                                     # کار انجام شد؛ اگه خبر دادنش نشد «خطا» حساب نشه
+            cloud("done", result={"job_id": job["id"], "ok": True, **extra})
+            log("   ✅ فرستاده شد")
+        except Exception as exc:
+            log(f"   ⚠️ کار انجام شد ولی به بات نرسید ({exc}); دور بعد دوباره")
+        return
 
 
 def relay(updates):
@@ -779,7 +866,7 @@ def main():
                     r = collect_now()
                     if r.get("added"):
                         log(f"📰 {r['added']} خبر جدید")
-                if time.time() - state["last_rank"] > RANK_EVERY:
+                if time.time() - state["last_rank"] > RANK_EVERY and not insta_active():
                     state["last_rank"] = time.time()
                     rank_watch()
             except Exception as exc:
@@ -787,36 +874,47 @@ def main():
             time.sleep(20)
 
     threading.Thread(target=background, daemon=True, name="background").start()
+    import queue
+    jobs_q, inflight = queue.Queue(), set()
+
+    def worker():
+        while True:
+            job = jobs_q.get()
+            try:
+                run_job(job)
+            except Exception as exc:
+                log(f"⚠️ {str(exc)[:150]}")
+            finally:
+                inflight.discard(job["id"])
+
+    threading.Thread(target=worker, daemon=True, name="jobs").start()
     busy_until = 0
     while True:
         try:
             polled = cloud("poll")
             if polled.get("updates"):
                 busy_until = time.time() + 15 * 60
+                PAUSE["insta_at"] = time.time()
                 try:
                     relay(polled["updates"])
                 except Exception as exc:
                     log(f"⚠️ منوی اینستاگرام: {exc}")
             for job in polled.get("jobs") or []:
-                kind = job.get("type")
-                log({"trailer": f"🎬 تریلر: {str(job.get('title', ''))[:60]} …",
-                     "rank": f"📊 ساخت کارت رنکینگ {job.get('source')} …",
-                     "insta": f"🎨 پست اینستاگرام: {str(job.get('news', {}).get('title', ''))[:60]} …"}.get(
-                    kind, f"🖼 درست کردن عکس خبر {job.get('news_id')} …"))
-                if kind == "insta":
-                    busy_until = time.time() + 15 * 60
+                if job.get("type") != "insta":                  # تریلر/رنکینگ/عکس → صف جدا (دکمه‌ها منتظر نمی‌مونن)
+                    if job["id"] not in inflight:
+                        inflight.add(job["id"])
+                        jobs_q.put(job)
+                    continue
+                PAUSE["insta_at"] = time.time()
+                busy_until = time.time() + 15 * 60
+                log(f"🎨 پست اینستاگرام: {str(job.get('news', {}).get('title', ''))[:60]} …")
                 try:
-                    fid = {"rank": handle_rank, "insta": handle_insta, "trailer": handle_trailer}.get(kind, handle)(job)
+                    handle_insta(job)
+                    cloud("done", result={"job_id": job["id"], "ok": True})
+                    log("   ✅ کاور ساخته شد")
                 except Exception as exc:
                     cloud("done", result={"job_id": job["id"], "ok": False, "error": str(exc)[:300]})
                     log(f"   ❌ {exc}")
-                    continue
-                extra = fid if isinstance(fid, dict) else {"file_id": fid}
-                try:                                             # کار انجام شد؛ اگه خبر دادنش نشد «خطا» حساب نشه
-                    cloud("done", result={"job_id": job["id"], "ok": True, **extra})
-                    log("   ✅ فرستاده شد")
-                except Exception as exc:
-                    log(f"   ⚠️ کار انجام شد ولی به بات نرسید ({exc}); دور بعد دوباره")
         except KeyboardInterrupt:
             raise
         except Exception:
