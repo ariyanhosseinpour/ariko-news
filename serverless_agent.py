@@ -132,11 +132,12 @@ def _remote_files():
         files = {}
         for name in z.namelist():
             rel = name.split("/", 1)[1] if "/" in name else ""
-            if rel == "serverless_agent.py" or (rel.startswith("serverless/tgcloud/") and rel.endswith(".js")):
+            if rel in ("serverless_agent.py", "news.py") or (rel.startswith("serverless/tgcloud/") and rel.endswith(".js")):
                 files[rel] = z.read(name).decode("utf-8")
         if any(k.startswith("serverless/tgcloud/") for k in files):
             _remote["files"] = files
             _self_update(files.get("serverless_agent.py"))
+            _sync_news(files.get("news.py"))
     except Exception as exc:
         log(f"⚠️ گرفتن کد جدید از گیت‌هاب نشد (با کد خود کامپیوتر ادامه میده): {exc}")
     return _remote["files"]
@@ -155,6 +156,27 @@ def _self_update(code):
     if _LOCK:
         _LOCK.close()
     os.execv(sys.executable, [sys.executable, me] + sys.argv[1:])
+
+
+def _sync_news(code):
+    """news.py (کد بات قدیمی که تریلر/کاور/رنکینگ باهاش ساخته میشه) هم از گیت‌هاب آپدیت میشه؛ نسخه‌ی قبلی news_backup.py"""
+    if not code:
+        return
+    path = os.path.join(BASE_DIR, "news.py")
+    old = ""
+    if os.path.exists(path):
+        with open(path, encoding="utf-8", errors="ignore") as fh:
+            old = fh.read()
+        if old.replace("\r\n", "\n") == code.replace("\r\n", "\n"):
+            return
+        with open(os.path.join(BASE_DIR, "news_backup.py"), "w", encoding="utf-8", newline="") as fh:
+            fh.write(old)
+    with open(path, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(code)
+    log("🔄 news.py آپدیت شد (نسخه‌ی قبلی: news_backup.py)؛ اجرای دوباره…")
+    if _LOCK:                                                    # کد قدیمی ممکنه توی حافظه باشه → از نو
+        _LOCK.close()
+    os.execv(sys.executable, [sys.executable, os.path.abspath(__file__)] + sys.argv[1:])
 
 
 def _sources():
