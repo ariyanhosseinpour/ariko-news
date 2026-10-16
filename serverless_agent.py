@@ -69,12 +69,15 @@ import { platform, storageName } from '../lib/platform.js';
 import { parseArticle, parseFeed } from '../lib/core.js';
 import db, { like, sql } from 'sdk/db';
 import { kv as kvTable } from '../schema.js';
-import { agentPoll, agentDone, collect, agentUpdates, prefetchPlan, diagnose, recoverLost, clearImageJobs, redoNews } from '../lib/news.js';
+import { agentPoll, agentDone, collect, agentUpdates, prefetchPlan, diagnose, recoverLost, clearImageJobs, redoNews, rankCheck, rankAdd, rankDone } from '../lib/news.js';
 export default async function (input) {
   const p = platform();
   if (input.op === 'poll') return { jobs: await agentPoll(p), updates: await agentUpdates(p) };
   if (input.op === 'done') return await agentDone(p, input.result || {});
   if (input.op === 'collect') return await collect(p, input.prefetched || null);
+  if (input.op === 'rankcheck') return await rankCheck(p, input.guids || []);
+  if (input.op === 'rankadd') return await rankAdd(p, input.item || {});
+  if (input.op === 'rankdone') return await rankDone(p, input);
   if (input.op === 'agentstat') {
     const seen = Number(await p.kv.get('cfg:agent_seen')) || 0;
     const jobs = (await p.kv.list('job:')).map((r) => ({ key: r.key, type: r.value && r.value.type, at: r.value && r.value.at }));
@@ -372,6 +375,61 @@ def handle_rank(job):
         raw = fh.read()
     caption = caption.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     return _send_photo(job["chat_id"], _fix_image(raw), caption, None)
+
+
+RANK_EVERY = 3 * 3600                                           # هر ۳ ساعت جدول‌های هفتگی چک میشن
+
+
+def rank_watch():
+    """مثل بات قدیمی: جدول هفتگی تازه (AniTrendz / Anime Corner / MyAnimeList) → کارت + کپشن → کانال آرشیو برای تأیید"""
+    mod = old_bot()
+    sources = [("AniTrendz", mod._anitrendz_collect_current,
+                lambda it: mod._anitrendz_build_chart_card(it.get("url") or "", it.get("ranking_payload") or "")),
+               ("Anime Corner", mod._animecorner_collect_current,
+                lambda it: mod._animecorner_build_chart_card(it.get("url") or "", it.get("ranking_payload") or "")),
+               ("MyAnimeList", mod._mal_collect_weekly_top_airing,
+                lambda it: mod._mal_build_chart_card(it.get("ranking_payload") or ""))]
+    found = []
+    for name, collect_fn, build in sources:
+        try:
+            for it in collect_fn() or []:
+                if it.get("guid"):
+                    found.append((name, it, build))
+        except Exception as exc:
+            log(f"   ⚠️ رنکینگ {name}: {str(exc)[:120]}")
+    if not found:
+        return 0
+    r = cloud("rankcheck", guids=[it["guid"] for _, it, _ in found])
+    if r.get("first"):
+        log(f"📊 رنکینگ هفتگی: {len(found)} جدول فعلی علامت خورد؛ از هفته‌ی بعد کارت‌های جدید خودکار میان")
+        return 0
+    unseen = set(r.get("unseen") or [])
+    sent = 0
+    for name, it, build in found:
+        if it["guid"] not in unseen:
+            continue
+        try:
+            path = build(it)
+            if not path or not os.path.exists(path):
+                raise RuntimeError("کارت ساخته نشد")
+            sig = mod._news_signature_text
+            mod._news_signature_text = lambda: ""                    # امضا رو سرور موقع انتشار اضافه می‌کنه
+            try:
+                caption = mod._ranking_caption(dict(it)) or it.get("title") or name
+            finally:
+                mod._news_signature_text = sig
+            add = cloud("rankadd", item={"guid": it["guid"], "caption": caption, "title": it.get("title") or "",
+                                         "link": it.get("url") or "", "source": name})
+            if add.get("skip"):
+                continue
+            with open(path, "rb") as fh:
+                fid = _send_photo(add["chat_id"], _fix_image(fh.read()), add["caption"], add.get("reply_markup"))
+            cloud("rankdone", id=add["id"], file_id=fid, chat_id=add["chat_id"])
+            log(f"📊 رنکینگ جدید {name} فرستاده شد: {str(it.get('title'))[:60]}")
+            sent += 1
+        except Exception as exc:
+            log(f"   ⚠️ کارت رنکینگ {name}: {str(exc)[:150]}")
+    return sent
 
 
 def handle_insta(job):
@@ -695,9 +753,16 @@ def main():
     _ensure_autostart()
     log("✅ برنامه‌ی کامپیوتر بات خبری روشنه (Ctrl+C برای بستن)")
     last_collect = 0
+    last_rank = 0
     busy_until = 0
     while True:
         try:
+            if time.time() - last_rank > RANK_EVERY and time.time() > busy_until:
+                last_rank = time.time()
+                try:
+                    rank_watch()
+                except Exception as exc:
+                    log(f"⚠️ رنکینگ هفتگی: {str(exc)[:150]}")
             if time.time() - last_collect > 300:                 # چک خبرها (اگه Serverless خودش زمان‌بندی نداشت)
                 last_collect = time.time()
                 r = collect_now()

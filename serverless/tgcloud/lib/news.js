@@ -666,6 +666,9 @@ export async function agentUpdates(p) {
 
 function previewText(p, news) {
   // مثل آرشیو بات قدیمی: کپشن تمیز + برچسب «با AI بازنویسی شده» (این برچسب‌ها توی کانال نمیان)
+  if (news.kind === "rank") {                                  // رنکینگ هفتگی: کپشن آماده‌ی بات قدیمی
+    return `${escapeHtml(news.caption)}\n\n📊 رنکینگ هفتگی — <i>${escapeHtml(news.source)}</i>`.slice(0, 1024);
+  }
   const note = (news.kind === "fact" ? "🧠 فکت" + (/reddit/i.test(news.source) ? " (از ردیت؛ تأییدنشده — قبل از انتشار چک کن)" : "") + "\n" : "") +
     (news.trailer_note ? `⚠️ تریلر: ${escapeHtml(news.trailer_note)}\n` : "") +
     `✅ 🤖 این متن با AI بازنویسی شده (${escapeHtml(news.model || "")})\n` +
@@ -824,6 +827,44 @@ export async function rankJob(p, source, chatId) {
   const job = { id: "r" + source + chatId, type: "rank", source, chat_id: chatId, created: Date.now(), taken: 0 };
   await p.kv.set("job:" + job.id, job);
   return Date.now() - ((await cfg(p, "agent_seen", 0)) || 0) < 120000;   // کامپیوتر روشنه؟
+}
+
+// ───────── رنکینگ هفتگی خودکار (کامپیوتر جدول جدید رو پیدا می‌کنه و کارت می‌سازه) ─────────
+/** کدوم جدول‌ها هنوز ساخته نشدن؛ بار اول همه فقط علامت می‌خورن (سیل کارت قدیمی نیاد) */
+export async function rankCheck(p, guids) {
+  const first = !(await p.kv.get("rankinit"));
+  const unseen = [];
+  for (const g of guids || []) {
+    const k = "rankseen:" + hashKey(g);
+    if (await p.kv.get(k)) continue;
+    if (first) await p.kv.set(k, Date.now()); else unseen.push(g);
+  }
+  if (first) await p.kv.set("rankinit", Date.now());
+  return { unseen, first };
+}
+
+/** جدول تازه → رکورد خبر؛ کامپیوتر کارت رو با این کپشن و دکمه‌ها می‌فرسته */
+export async function rankAdd(p, { guid, caption, title, link, source }) {
+  if (await p.kv.get("rankseen:" + hashKey(guid))) return { skip: true };
+  const id = hashKey("rank" + guid);                         // همون جدول ← همون رکورد (اگه نصفه موند، دوباره)
+  const news = { id, kind: "rank", guid, title: title || guid, link: link || "", source: source || "Ranking",
+                 caption: String(caption || "").slice(0, 1000), status: "needs_image", file_id: "", created: Date.now() };
+  await p.kv.set("news:" + id, news);
+  return { id, chat_id: (await reviewChats(p))[0], caption: previewText(p, news), reply_markup: reviewKeyboard(id, news.link) };
+}
+
+export async function rankDone(p, { id, file_id, chat_id }) {
+  const news = await p.kv.get("news:" + id);
+  if (!news) return { ok: false };
+  news.file_id = file_id;
+  news.status = "pending";
+  await p.kv.set("news:" + id, news);
+  if (news.guid) await p.kv.set("rankseen:" + hashKey(news.guid), Date.now());   // فقط بعد از فرستادن موفق
+  for (const c of (await reviewChats(p)).filter((x) => String(x) !== String(chat_id))) {
+    try { await p.api("sendPhoto", { chat_id: c, photo: file_id, caption: previewText(p, news), parse_mode: "HTML",
+                                     reply_markup: reviewKeyboard(id, news.link) }); } catch (e) { /* */ }
+  }
+  return { ok: true };
 }
 
 // ───────── صف بررسی: خبرهایی که هنوز تأیید/رد نشدن ─────────
