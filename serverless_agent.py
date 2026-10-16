@@ -149,6 +149,8 @@ def _self_update(code):
     with open(me, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(code)
     log("🔄 برنامه آپدیت شد؛ اجرای دوباره…")
+    if _LOCK:
+        _LOCK.close()
     os.execv(sys.executable, [sys.executable, me] + sys.argv[1:])
 
 
@@ -464,6 +466,51 @@ def relay(updates):
     mod.bot.process_new_updates([types.Update.de_json(u) for u in updates])
 
 
+_LOCK = None
+
+
+def _single_instance():
+    """دو تا پنجره با هم کار نکنن (مثلاً هم خودکار باز شد هم دستی)؛ موقع آپدیت خودکار چند ثانیه صبر می‌کنه"""
+    global _LOCK
+    import socket
+    for _ in range(15):
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            sock.bind(("127.0.0.1", 47821))
+            sock.listen(1)
+            _LOCK = sock
+            return
+        except OSError:
+            sock.close()
+            time.sleep(1)
+    log("ℹ️ برنامه همین الان توی یه پنجره‌ی دیگه بازه؛ این پنجره بسته میشه.")
+    time.sleep(5)
+    sys.exit(0)
+
+
+def _ensure_autostart():
+    """ویندوز: با روشن شدن لپ‌تاپ خودش باز بشه (یه فایل کوچیک توی پوشه‌ی Startup). خاموش: AGENT_AUTOSTART=0"""
+    if os.name != "nt" or os.environ.get("AGENT_AUTOSTART", "1") == "0":
+        return
+    folder = os.path.join(os.environ.get("APPDATA", ""), "Microsoft", "Windows", "Start Menu", "Programs", "Startup")
+    if not os.path.isdir(folder):
+        return
+    me = os.path.abspath(__file__)
+    py = sys.executable
+    if py.lower().endswith("pythonw.exe"):
+        py = py[:-len("pythonw.exe")] + "python.exe"
+    bat = os.path.join(folder, "ariko_news_agent.bat")
+    content = f'@echo off\r\ncd /d "{os.path.dirname(me)}"\r\nstart "ARIKO news agent" "{py}" "{me}"\r\n'
+    try:
+        old = open(bat, encoding="utf-8").read() if os.path.exists(bat) else ""
+        if old != content:
+            with open(bat, "w", encoding="utf-8", newline="") as fh:
+                fh.write(content)
+            log("🔁 از این به بعد با روشن شدن لپ‌تاپ، این برنامه خودش باز میشه.")
+    except OSError as exc:
+        log(f"⚠️ اجرای خودکار تنظیم نشد: {exc}")
+
+
 def main():
     if not TG_CLOUD or ":" not in TG_CLOUD:
         sys.exit("TGCLOUD_TOKEN رو توی .env بذار (BotFather → Serverless → CLI Access → Access token).")
@@ -575,6 +622,8 @@ def main():
             time.sleep(300)
     if not TOKEN:
         sys.exit("NEWS_BOT_TOKEN رو توی .env بذار.")
+    _single_instance()
+    _ensure_autostart()
     log("✅ برنامه‌ی کامپیوتر بات خبری روشنه (Ctrl+C برای بستن)")
     last_collect = 0
     busy_until = 0
