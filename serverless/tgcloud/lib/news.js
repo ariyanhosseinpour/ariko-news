@@ -7,7 +7,8 @@ import { DEFAULT_FEEDS, FACT_FEEDS, importance, eventType, guessAnimeName, DEFAU
          escapeHtml, imageSize } from "./core.js";
 
 export const OWNER_ID = 513902877;
-const MAX_NEW_PER_RUN = 3;                                  // هر بار چک (هر ۵ دقیقه) حداکثر ۳ خبر جدید؛ سبک بمونه
+const MAX_NEW_PER_RUN = 3;
+const RUN_BUDGET_MS = 12000;                                 // بعد از ۱۲ ثانیه خبر تازه شروع نمیشه (بقیه دور بعد)                                  // هر بار چک (هر ۵ دقیقه) حداکثر ۳ خبر جدید؛ سبک بمونه
 const DEFAULT_MODELS = ["gemini-3.5-flash-lite", "gemini-3.5-flash", "gemini-flash-lite-latest"];
 export const DEFAULT_FOOTER = "آریکو تی وی | @Ariko_Tv";
 
@@ -186,10 +187,12 @@ export async function agentCaption(p, item, meta) {
 export async function collect(p, pre = null) {
   const report = { checked: 0, added: 0, low: 0, errors: [] };
   let factCalls = 0;
+  const started = Date.now();
+  const late = () => Date.now() - started > RUN_BUDGET_MS;   // اجرا روی سرور حدود ۳۰ ثانیه وقت داره
   const minImp = Number(await cfg(p, "min_importance", DEFAULT_MIN_IMPORTANCE));
   for (const f of await feeds(p)) {
     if (f.active === false) continue;                         // منبع غیرفعال
-    if (report.added >= MAX_NEW_PER_RUN) break;
+    if (report.added >= MAX_NEW_PER_RUN || late()) break;
     let items = [];
     const stateKey = "feedstate:" + hashKey(f.url);
     const prev = await p.kv.get(stateKey);
@@ -210,16 +213,24 @@ export async function collect(p, pre = null) {
     for (const it of items.slice(0, 15)) {
       report.checked++;
       const seenKey = "seen:" + hashKey(it.link);
-      if (await p.kv.get(seenKey)) continue;
-      if (!first && report.added >= MAX_NEW_PER_RUN) break;  // بقیه برای چک بعدی می‌مونن (گم نمی‌شن)
-      await p.kv.set(seenKey, 1);
+      const seen = await p.kv.get(seenKey);
+      // «در حال ساخت» که بیشتر از ۳ دقیقه مونده یعنی اجرای قبلی وسط کار قطع شده → دوباره
+      if (seen && !(typeof seen === "object" && seen.busy && Date.now() - seen.busy > 3 * 60e3)) continue;
+      if (!first && (report.added >= MAX_NEW_PER_RUN || late())) break;  // بقیه برای چک بعدی می‌مونن (گم نمی‌شن)
+      if (seen && seen.busy) {                                 // قطع‌شده‌ها هم حداکثر ۳ بار
+        const tries = Number((await p.kv.get("retry:" + hashKey(it.link))) || 0) + 1;
+        await p.kv.set("retry:" + hashKey(it.link), tries);
+        if (tries >= 4) { await p.kv.set(seenKey, 1); continue; }
+      }
+      await p.kv.set(seenKey, first ? 1 : { busy: Date.now() });
       if (first) continue;                                    // بار اول فقط علامت‌گذاری (سیل خبرهای قدیمی نیاد)
-      if (it.leak && !it.image) { await logDecision(p, f, it, null, "🖼 پست X بدون عکس"); continue; }
+      if (it.leak && !it.image) { await p.kv.set(seenKey, 1); await logDecision(p, f, it, null, "🖼 پست X بدون عکس"); continue; }
       if (f.type === "fact") {                                 // منبع فکت: فیلتر اهمیت نداره، AI فکت جالب پیدا می‌کنه
         if (factCalls >= MAX_FACT_CALLS) { await p.kv.del(seenKey); break; }   // بقیه برای چک بعدی
         factCalls++;
         try {
           const r = await addFact(p, f, it);
+          await p.kv.set(seenKey, 1);
           if (r === "ok") { report.added++; await logDecision(p, f, it, null, "🧠 فکت فرستاده شد"); }
           else await logDecision(p, f, it, null, r === "dup" ? "♻️ فکت تکراری" : "🧠 فکت جالبی نداشت");
         } catch (e) {
@@ -238,12 +249,14 @@ export async function collect(p, pre = null) {
       }
       it.importance = imp.score;
       if (it.importance < minImp) {                           // فیلتر اهمیت خبر (قبل از Gemini؛ سهمیه هدر نمیره)
+        await p.kv.set(seenKey, 1);
         report.low++;
         await logDecision(p, f, it, imp, `⭐️ کم‌اهمیت (${imp.score} < ${minImp})`);
         continue;
       }
       try {
         const res = await addNews(p, f, it);
+        await p.kv.set(seenKey, 1);
         if (res === "not_news" || res === "dup") {
           await logDecision(p, f, it, imp, res === "dup" ? "♻️ تکراری (از منبع دیگه اومده بود)" : "🚫 AI گفت خبر نیست (نقد/راهنما/لیست…)");
         } else {
@@ -543,9 +556,13 @@ async function posterImages(p, urls, referer) {
   if (urls.length <= 1) return urls;
   const sizes = await Promise.all(urls.map(async (u) => {
     try {
-      const res = await p.fetch(u, { headers: { "User-Agent": "Mozilla/5.0", "Referer": referer, "Range": "bytes=0-131071" } });
-      if (!res.ok) return null;
-      return imageSize(await headBytes(res, 131072));
+      return await Promise.race([
+        (async () => {
+          const res = await p.fetch(u, { headers: { "User-Agent": "Mozilla/5.0", "Referer": referer, "Range": "bytes=0-131071" } });
+          return res.ok ? imageSize(await headBytes(res, 131072)) : null;
+        })(),
+        new Promise((r) => setTimeout(() => r(null), 4000)),  // سایت کند → بی‌خیال این عکس
+      ]);
     } catch (e) { return null; }
   }));
   const posters = urls.filter((u, i) => sizes[i] && sizes[i].h >= sizes[i].w * 1.15);
