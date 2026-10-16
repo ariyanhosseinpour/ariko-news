@@ -25,6 +25,8 @@ VOICE (very important):
 - Do not write dates in the text (the bot adds a date line). Do not explain obvious things.
 - If CERTAINTY is a leak/rumor, make it clear the info is UNOFFICIAL (not a guess): start the headline with
   «طبق گزارشات غیررسمی؛» or «طبق اطلاعات لو رفته؛». Do NOT use «احتمالاً» for this — it sounds like we are guessing.
+- Trailer/teaser/poster order: never write «تریلر اول» or «اولین تریلر» — for the first one just say «تریلر».
+  For later ones put the ordinal before the noun: «دومین تریلر» / «سومین تیزر», never «تریلر دوم».
 - Never write «کور» / «cour» — most fans don't know it. Say «پارت» (e.g. «۲۴ قسمت در دو پارت پشت‌سرهم»،
   «پارت دوم»).
 
@@ -172,6 +174,12 @@ export function soften(text) {
   t = t.replace(/\sاست(?=[.!]?\s*$)/g, " هست");
   t = t.replace(/خواهد\s+بود/g, "هست");
   t = t.replace(/می‌شود|میشود/g, "میشه");
+  // «تریلر اول» → «تریلر»؛ «تریلر دوم» → «دومین تریلر»
+  const MEDIA = "تریلر|تیزر|پوستر|ویژوال|پی‌وی|پیش‌نمایش";
+  t = t.replace(new RegExp(`(?:اولین|نخستین)\\s+(${MEDIA})`, "g"), "$1");
+  t = t.replace(new RegExp(`(${MEDIA})(‌?ها)?(\\s+(?:جدید\\s+)?)اول(?![؀-ۿ])\\s*`, "g"), (m, n, pl, sp) => `${n}${pl || ""} `);
+  t = t.replace(new RegExp(`(${MEDIA})\\s+(دوم|سوم|چهارم|پنجم|ششم|هفتم)(?![؀-ۿ])`, "g"), "$2ین $1");
+  t = t.replace(/\s{2,}/g, " ").replace(/\s+([.،!])/g, "$1");
   t = t.replace(/(^|[^؀-ۿ])کورهای(?![؀-ۿ])/g, "$1پارت‌های");
   t = t.replace(/(^|[^؀-ۿ])کور(?=\s*(?:اول|دوم|سوم|چهارم|پنجم|ششم|[۰-۹0-9]|متوالی|پشت))/g, "$1پارت");
   t = t.replace(/((?:[۰-۹0-9]|دو|سه)\s)کور(?![؀-ۿ])/g, "$1پارت");
