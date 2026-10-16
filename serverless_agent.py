@@ -366,6 +366,9 @@ def _pause_hook(d):
         raise Paused("ادیت پست اینستاگرام")
 
 
+COVER_STOP = {"in", "and", "of", "with", "to", "at", "on", "but", "for", "from", "as", "the", "after", "when", "who"}
+
+
 def old_bot():
     """کد بات قدیمی (news.py کنار همین فایل) فقط به‌عنوان کتابخونه؛ خود بات قدیمی اجرا (polling) نمیشه."""
     with _old_bot_lock:
@@ -390,7 +393,23 @@ def _load_old_bot():
                 best = max([r for r in runs if re.search(r"[A-Za-z]{2}", r)], key=len, default="")
                 if len(best) >= 3:
                     t = t.replace(best, f"[{best}]", 1)
-            return t
+            return re.sub(r"\[([^\]]+)\]", lambda m: f"[{cover_name(m.group(1).strip())}]", t)
+
+        def cover_name(inner):
+            """اسم بلند روی کاور تیتر رو به‌هم می‌ریزه: مترادف کوتاه AniList، وگرنه قبل از in/and/of/… بریده میشه
+            (I Got a Cheat Skill in Another World… → I Got a Cheat Skill)"""
+            if len(inner) <= 22:
+                return inner
+            try:
+                short = mod._insta_short_for(inner)
+            except Exception:
+                short = inner
+            if len(short) <= 22:
+                return short
+            words = inner.split()
+            cut = [" ".join(words[:i]) for i in range(2, len(words))
+                   if words[i].lower().strip(",") in COVER_STOP and 8 <= len(" ".join(words[:i]).rstrip(",")) <= 26]
+            return max(cut, key=len).rstrip(",") if cut else inner
         mod._insta_clean_title = clean_title
         orig_opts = mod._trailer_ydl_opts
 
