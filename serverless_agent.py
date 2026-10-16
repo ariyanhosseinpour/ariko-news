@@ -343,8 +343,17 @@ def handle(job):
 _old_bot = None
 
 
+import threading
+_old_bot_lock = threading.Lock()
+
+
 def old_bot():
     """کد بات قدیمی (news.py کنار همین فایل) فقط به‌عنوان کتابخونه؛ خود بات قدیمی اجرا (polling) نمیشه."""
+    with _old_bot_lock:
+        return _load_old_bot()
+
+
+def _load_old_bot():
     global _old_bot
     if _old_bot is None:
         if not os.path.exists(os.path.join(BASE_DIR, "news.py")):
@@ -364,6 +373,14 @@ def old_bot():
                     t = t.replace(best, f"[{best}]", 1)
             return t
         mod._insta_clean_title = clean_title
+        try:                                                      # آپلود کاور/PSD با اینترنت کند: وقت بیشتر + تلاش دوباره
+            from telebot import apihelper
+            apihelper.CONNECT_TIMEOUT = 30
+            apihelper.READ_TIMEOUT = 300
+            apihelper.RETRY_ON_ERROR = True
+            apihelper.MAX_RETRIES = 3
+        except Exception:
+            pass
         _old_bot = mod
     return _old_bot
 
@@ -752,22 +769,27 @@ def main():
     _single_instance()
     _ensure_autostart()
     log("✅ برنامه‌ی کامپیوتر بات خبری روشنه (Ctrl+C برای بستن)")
-    last_collect = 0
-    last_rank = 0
+    state = {"last_collect": 0, "last_rank": 0}
+
+    def background():                                            # کارهای طولانی جدا، که دکمه‌ها منتظر نمونن
+        while True:
+            try:
+                if time.time() - state["last_collect"] > 300:
+                    state["last_collect"] = time.time()
+                    r = collect_now()
+                    if r.get("added"):
+                        log(f"📰 {r['added']} خبر جدید")
+                if time.time() - state["last_rank"] > RANK_EVERY:
+                    state["last_rank"] = time.time()
+                    rank_watch()
+            except Exception as exc:
+                log(f"⚠️ {str(exc)[:150]}")
+            time.sleep(20)
+
+    threading.Thread(target=background, daemon=True, name="background").start()
     busy_until = 0
     while True:
         try:
-            if time.time() - last_rank > RANK_EVERY and time.time() > busy_until:
-                last_rank = time.time()
-                try:
-                    rank_watch()
-                except Exception as exc:
-                    log(f"⚠️ رنکینگ هفتگی: {str(exc)[:150]}")
-            if time.time() - last_collect > 300:                 # چک خبرها (اگه Serverless خودش زمان‌بندی نداشت)
-                last_collect = time.time()
-                r = collect_now()
-                if r.get("added"):
-                    log(f"📰 {r['added']} خبر جدید")
             polled = cloud("poll")
             if polled.get("updates"):
                 busy_until = time.time() + 15 * 60
@@ -799,7 +821,7 @@ def main():
             raise
         except Exception:
             log("⚠️ " + traceback.format_exc(limit=1).strip().splitlines()[-1])
-        time.sleep(2 if time.time() < busy_until else 20)       # وسط کار اینستاگرام: دکمه‌ها سریع جواب بدن
+        time.sleep(2 if time.time() < busy_until else 6)        # وسط کار اینستاگرام: دکمه‌ها سریع جواب بدن
 
 
 if __name__ == "__main__":
