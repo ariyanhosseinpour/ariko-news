@@ -76,6 +76,12 @@ function photoId(msg) {
   return sizes.length ? sizes[sizes.length - 1].file_id : "";
 }
 
+/** پیش‌نمایش خبرها کجا بره: کانال آرشیو (اگه تنظیم شده) وگرنه خصوصی ادمین‌ها */
+export async function reviewChats(p) {
+  const r = await cfg(p, "review_chat", "");
+  return r ? [r] : await admins(p);
+}
+
 async function notifyAdmins(p, text, extra = {}) {
   for (const id of await admins(p)) {
     try { await p.api("sendMessage", { chat_id: id, text, parse_mode: "HTML", disable_web_page_preview: true, ...extra }); }
@@ -728,14 +734,14 @@ export async function preview(p, news) {
   if (news.images && news.images.length > 1) {
     await ensurePhotoIds(p, news);
     if ((news.photo_ids || []).length > 1) {
-      for (const id of await admins(p)) { try { await sendPreviewTo(p, id, news); } catch (e) { /* */ } }
+      for (const id of await reviewChats(p)) { try { await sendPreviewTo(p, id, news); } catch (e) { /* */ } }
       return;
     }
   }
   const photo = news.file_id || news.image;
   if (!photo) return needImage(p, news, "عکسی برای این خبر پیدا نشد", "preview");
   let ok = 0;
-  for (const id of await admins(p)) {
+  for (const id of await reviewChats(p)) {
     try {
       const msg = await sendPhotoSmart(p, { chat_id: id, photo: news.file_id || photo,
                                             caption: previewText(p, news).slice(0, 1024),
@@ -757,7 +763,7 @@ export async function needImage(p, news, reason, after) {
   await p.kv.set("news:" + news.id, news);
   const job = { id: "j" + news.id, type: "image", news_id: news.id, image: news.image, page: news.link, after,
                 created: Date.now(), taken: 0,
-                chat_id: after === "post" ? await cfg(p, "channel", "") : OWNER_ID,
+                chat_id: after === "post" ? await cfg(p, "channel", "") : (await reviewChats(p))[0],
                 caption: after === "post" ? channelCaption(news, await cfg(p, "footer", DEFAULT_FOOTER))
                                           : previewText(p, news).slice(0, 1024),
                 reply_markup: after === "post" ? null : reviewKeyboard(news.id, news.link) };
@@ -874,7 +880,7 @@ export async function agentDone(p, { job_id, ok, file_id, error, message_id, not
       }
       await p.kv.set("news:" + news.id, news);
       await ensurePhotoIds(p, news);                            // تریلر + پوستر → یه آلبوم
-      for (const id of await admins(p)) { try { await sendPreviewTo(p, id, news); } catch (e) { /* */ } }
+      for (const id of await reviewChats(p)) { try { await sendPreviewTo(p, id, news); } catch (e) { /* */ } }
     } else if (news.sibling) {                                  // پست پوستر جدا رفته؛ فقط خبر بده تریلر نشد
       news.status = "rejected";
       await p.kv.set("news:" + news.id, news);
@@ -921,8 +927,8 @@ export async function agentDone(p, { job_id, ok, file_id, error, message_id, not
     news.file_id = file_id || news.file_id;
     news.status = job.after === "post" ? "posted" : "pending";
     await p.kv.set("news:" + news.id, news);
-    if (job.after !== "post") {                               // کامپیوتر برای صاحب ربات فرستاد؛ بقیه‌ی ادمین‌ها با file_id
-      for (const id of (await admins(p)).filter(x => x !== OWNER_ID)) {
+    if (job.after !== "post") {                               // کامپیوتر برای اولی فرستاد؛ بقیه با file_id
+      for (const id of (await reviewChats(p)).filter((x) => String(x) !== String(job.chat_id))) {
         try { await p.api("sendPhoto", { chat_id: id, photo: news.file_id, caption: job.caption, parse_mode: "HTML",
                                          reply_markup: job.reply_markup }); } catch (e) { /* */ }
       }

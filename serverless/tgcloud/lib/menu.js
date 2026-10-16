@@ -60,6 +60,7 @@ export async function statusText(p) {
   return "📰 <b>بات خبری آریکو</b>\n\n" +
     `🔑 هوش مصنوعی (Gemini): ${(await cfg(p, "gemini_key", "")) ? "✅" : "❌ تنظیم نشده"}\n` +
     `📢 کانال: ${(await cfg(p, "channel", "")) ? "✅ " + escapeHtml(await cfg(p, "channel", "")) : "❌ تنظیم نشده"}\n` +
+    ((await cfg(p, "review_chat", "")) ? `📥 کانال آرشیو: ✅ ${escapeHtml(await cfg(p, "review_chat", ""))}\n` : "") +
     `📡 منبع‌ها: ${(await feeds(p)).length} تا\n` +
     `📥 صف بررسی: ${queue} خبر\n` +
     `🖥 برنامه‌ی کامپیوتر: ${Date.now() - seen < 120000 ? "✅ روشن" : "⚪️ خاموش (فقط برای درست کردن عکس لازمه)"}\n` +
@@ -130,12 +131,20 @@ export async function adminsView(p) {
   };
 }
 
-export const channelView = async (p) => ({
-  text: "📢 <b>کانال خبر</b>\n\n" +
-    `الان: ${escapeHtml((await cfg(p, "channel", "")) || "❌ تنظیم نشده")}\n\n` +
-    "برای عوض کردن، دکمه‌ی زیر رو بزن.",
-  reply_markup: { inline_keyboard: [[{ text: "🔁 تنظیم کانال", callback_data: "ch:set" }]] },
-});
+export const channelView = async (p) => {
+  const review = await cfg(p, "review_chat", "");
+  const rows = [[{ text: "🔁 تنظیم کانال اصلی", callback_data: "ch:set" }],
+                [{ text: "📥 تنظیم کانال آرشیو", callback_data: "ch:rev" }]];
+  if (review) rows.push([{ text: "🚫 برداشتن کانال آرشیو", callback_data: "ch:revoff" }]);
+  return {
+    text: "📢 <b>کانال خبر</b>\n\n" +
+      `📢 کانال اصلی: ${escapeHtml((await cfg(p, "channel", "")) || "❌ تنظیم نشده")}\n` +
+      `📥 کانال آرشیو: ${review ? escapeHtml(review) : "— (پیش‌نمایش‌ها توی خصوصی بات میان)"}\n\n` +
+      "اگه کانال آرشیو تنظیم بشه، پیش‌نمایش خبرها با دکمه‌ی ✅ انتشار / ❌ رد اونجا میاد (نه توی بات)؛ " +
+      "با زدن ✅ خبر میره کانال اصلی.",
+    reply_markup: { inline_keyboard: rows },
+  };
+};
 
 export const footerView = async (p, def) => ({
   text: "✍️ <b>امضای پایین پست</b>\n\n" + escapeHtml((await cfg(p, "footer", null)) ?? def),
@@ -156,6 +165,9 @@ export const WAIT_PROMPT = {
     "<code>@SugoiLITE @d0nut2x</code>\n\n" +
     "📰 <b>سایت خبری:</b> لینک RSS (اسمش رو هم اگه خواستی بعد از لینک بنویس):\n<code>https://site.com/feed اسم منبع</code>",
   channel: "📢 یه پست از کانال رو برام <b>فوروارد</b> کن (ساده‌ترین راه)،\nیا آیدی کانال رو بفرست: <code>@Ariko_News</code> یا <code>-100…</code>\n\n⚠️ بات باید ادمین کانال باشه.",
+  review: "📥 <b>کانال آرشیو</b> (جای پیش‌نمایش خبرها)\n\nیه پست از اون کانال رو برام <b>فوروارد</b> کن،\n" +
+    "یا آیدیش رو بفرست: <code>@MyArchive</code> یا <code>-100…</code>\n\n" +
+    "⚠️ بات باید ادمین اون کانال باشه (با دسترسی فرستادن و ویرایش پیام).",
   footer: "✍️ متن امضای پایین پست رو بفرست.\nبرای حذف امضا بنویس: <code>-</code>",
   key: "🔑 کلید Gemini رو بفرست (با AIza شروع میشه).\nپیامت بعد از ذخیره پاک میشه.",
   admin: "👤 یه پیام از اون شخص رو برام <b>فوروارد</b> کن، یا آیدی عددی‌اش رو بفرست.",

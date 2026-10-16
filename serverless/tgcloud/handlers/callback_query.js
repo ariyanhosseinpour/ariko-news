@@ -2,7 +2,7 @@
 import { platform } from "../lib/platform.js";
 import { isAdmin, publish, reject, feeds, setCfg, cfg, admins, rankJob, RANK_SOURCES, instaJob, agentOnline, relayActive, relayUpdate, RELAY_PREFIXES } from "../lib/news.js";
 import { escapeHtml, hashKey } from "../lib/core.js";
-import { importanceView, feedCard, aiView, adminsView, setWait, cancelKeyboard, WAIT_PROMPT } from "../lib/menu.js";
+import { importanceView, feedCard, aiView, adminsView, channelView, setWait, cancelKeyboard, WAIT_PROMPT } from "../lib/menu.js";
 
 export default async function (q, ctx) {
   const p = platform();
@@ -125,7 +125,16 @@ export default async function (q, ctx) {
       await answer("✅ ذخیره شد");
       return edit(await importanceView(p));
     }
-    case "ch": return action === "set" ? ask("channel") : answer();
+    case "ch": {
+      if (action === "set") return ask("channel");
+      if (action === "rev") return ask("review");
+      if (action === "revoff") {
+        await setCfg(p, "review_chat", "");
+        await answer("🚫 برداشته شد");
+        return edit(await channelView(p));
+      }
+      return answer();
+    }
     case "ft": return action === "set" ? ask("footer") : answer();
   }
   return answer();

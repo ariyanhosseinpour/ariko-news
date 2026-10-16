@@ -133,7 +133,8 @@ async function handleWait(p, msg, uid, wait, raw, send, menu) {
       await clearWait(p, uid);
       return menu(`✅ منبع «${escapeHtml(label)}» اضافه شد. الان ${list.length} منبع داری.`);
     }
-    case "channel": {
+    case "channel":
+    case "review": {
       const origin = msg.forward_origin;
       let chat = origin && origin.type === "channel" && origin.chat ? String(origin.chat.id)
                : (msg.forward_from_chat ? String(msg.forward_from_chat.id) : raw.trim());
@@ -150,6 +151,15 @@ async function handleWait(p, msg, uid, wait, raw, send, menu) {
         title = info.title || chat;
       } catch (e) {
         return again("❗️ بات به این کانال دسترسی نداره. اول بات رو <b>ادمین کانال</b> کن، بعد دوباره بفرست.");
+      }
+      if (wait.kind === "review") {
+        if (String(chat) === String(await cfg(p, "channel", ""))) {
+          return again("❗️ این همون کانال اصلیه. کانال آرشیو باید یه کانال جدا باشه.");
+        }
+        await setCfg(p, "review_chat", chat);
+        await clearWait(p, uid);
+        return menu(`✅ کانال آرشیو: <b>${escapeHtml(title)}</b>\n(<code>${escapeHtml(chat)}</code>)\n\n` +
+                    "از این به بعد پیش‌نمایش خبرها اونجا میاد؛ با ✅ میره کانال اصلی.");
       }
       await setCfg(p, "channel", chat);
       await clearWait(p, uid);
