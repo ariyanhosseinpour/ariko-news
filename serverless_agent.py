@@ -187,7 +187,11 @@ def cloud(op, **args):
         with urllib.request.urlopen(req, timeout=240) as resp:
             data = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
-        data = json.loads(exc.read().decode("utf-8") or "{}")
+        raw = exc.read().decode("utf-8", "ignore")
+        try:
+            data = json.loads(raw or "{}")
+        except ValueError:
+            raise RuntimeError(f"tgcloud HTTP {exc.code}: {raw[:300] or '(بدون متن)'}")
     if not data.get("ok"):
         raise RuntimeError(data.get("description") or f"tgcloud run: {data}")
     return (data.get("result") or {}).get("result") or {}
