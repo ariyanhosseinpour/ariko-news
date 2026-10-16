@@ -190,15 +190,31 @@ def cloud(op, **args):
                        "ctx": {}}).encode("utf-8")
     req = urllib.request.Request(f"{CLOUD_API}/{app_id}/manage/run", data=body, method="POST",
                                  headers={"Authorization": f"Bearer {TG_CLOUD}", "Content-Type": "application/json"})
-    try:
-        with urllib.request.urlopen(req, timeout=240) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        raw = exc.read().decode("utf-8", "ignore")
+    for attempt in range(4):                                     # اینترنت لحظه‌ای قطع شد (WinError 10054…) → دوباره
         try:
-            data = json.loads(raw or "{}")
-        except ValueError:
-            raise RuntimeError(f"tgcloud HTTP {exc.code}: {raw[:300] or '(بدون متن)'}")
+            with urllib.request.urlopen(req, timeout=240) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            break
+        except urllib.error.HTTPError as exc:
+            return _cloud_raise(exc)
+        except (urllib.error.URLError, ConnectionError, TimeoutError) as exc:
+            if attempt == 3:
+                raise
+            log(f"   🌐 اتصال به تلگرام قطع شد ({str(exc)[:60]})؛ دوباره…")
+            time.sleep(3 * (attempt + 1))
+    return _cloud_result(data)
+
+
+def _cloud_raise(exc):
+    raw = exc.read().decode("utf-8", "ignore")
+    try:
+        data = json.loads(raw or "{}")
+    except ValueError:
+        raise RuntimeError(f"tgcloud HTTP {exc.code}: {raw[:300] or '(بدون متن)'}")
+    return _cloud_result(data)
+
+
+def _cloud_result(data):
     if not data.get("ok"):
         raise RuntimeError(data.get("description") or f"tgcloud run: {data}")
     return (data.get("result") or {}).get("result") or {}
@@ -390,6 +406,48 @@ def handle_insta(job):
     return ""
 
 
+_SEASON_RES = [r"season\s*(\d{1,2})(?!\d)", r"(?<!\d)(\d{1,2})\s*(?:st|nd|rd|th)\s+season", r"第\s*(\d{1,2})\s*期",
+               r"(?<!\d)(\d{1,2})\s*期", r"(?<![a-z0-9])s(\d{1,2})(?![a-z0-9])"]
+
+
+def _season(text):
+    """شماره‌ی فصل از متن (Season 2 / 2nd Season / 第2期 / 2期 / S2)؛ نبود → None"""
+    import unicodedata
+    t = unicodedata.normalize("NFKC", str(text or "")).lower()
+    for pat in _SEASON_RES:
+        m = re.search(pat, t)
+        if m and 1 <= int(m.group(1)) <= 30:
+            return int(m.group(1))
+    return None
+
+
+def _yt_search(mod, query, count=8):
+    """جدیدترین ویدیوهای یوتیوب؛ yt-dlp جدید «ytsearchdate» رو برداشته → صفحه‌ی جستجو با مرتب‌سازی تاریخ"""
+    try:
+        return mod._trailer_search(query, by_date=True, count=count)
+    except Exception as exc:
+        if "ytsearchdate" not in str(exc) and "Unsupported url" not in str(exc):
+            raise
+    try:
+        opts = mod._trailer_ydl_opts(mod.TRAILER_HEIGHT)
+        opts.update({"extract_flat": "in_playlist", "skip_download": True, "playlistend": count})
+        url = "https://www.youtube.com/results?search_query=" + urllib.parse.quote(query) + "&sp=CAI%3D"
+        with mod.yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+        out = []
+        for e in ((info or {}).get("entries") or [])[:count]:
+            vid = e.get("id") or ""
+            if vid:
+                out.append({"url": f"https://www.youtube.com/watch?v={vid}", "title": str(e.get("title") or ""),
+                            "duration": int(e.get("duration") or 0),
+                            "channel": str(e.get("channel") or e.get("uploader") or "")})
+        if out:
+            return out
+    except Exception as exc:
+        log(f"   ⚠️ جستجوی مرتب‌شده بر اساس تاریخ نشد: {str(exc)[:100]}")
+    return mod._trailer_search(query, by_date=False, count=count)
+
+
 def _find_trailer(mod, job):
     """لینک تریلر توی خبر نبود → مثل بات قدیمی توی یوتیوب (اسم ژاپنی/رومانجی + PV)؛ فقط ویدیوهای تازه."""
     from email.utils import parsedate_to_datetime
@@ -399,12 +457,16 @@ def _find_trailer(mod, job):
     names = [n for i, n in enumerate(names) if n and n not in names[:i]]
     if not names:
         raise RuntimeError("اسم انیمه معلوم نیست که توی یوتیوب دنبال تریلرش بگردم")
+    want = _season(job.get("title")) or _season(anime)              # خبر درباره‌ی فصل چندمه؟
     queries = ([f"{meta['title_native']} PV"] if meta.get("title_native") else []) + \
               [f"{meta.get('title_romaji') or anime} PV", f"{anime} trailer"]
+    if want and want >= 2:                                          # اول با شماره‌ی فصل بگرد
+        queries = ([f"{meta['title_native']} 第{want}期 PV"] if meta.get("title_native") else []) + \
+                  [f"{meta.get('title_romaji') or anime} Season {want} PV"] + queries
     results, seen, errs = [], set(), []
     for q in queries:
         try:
-            for r in mod._trailer_search(q, by_date=True, count=8):
+            for r in _yt_search(mod, q, count=8):
                 if r["url"] not in seen:
                     seen.add(r["url"])
                     results.append(r)
@@ -421,13 +483,20 @@ def _find_trailer(mod, job):
     for r in results:
         if mod._TRAILER_JUNK_RE.search(r["title"]) or not mod._trailer_name_match(names, r["title"]):
             continue
+        vs = _season(r["title"])
+        if want and vs and vs != want:                               # خبر فصل ۲ ← تریلر فصل ۱/۳ نه
+            continue
         up = mod._trailer_upload_ts(r["url"])
         if up and not (news_ts - mod.TRAILER_MAX_AGE_DAYS * 86400 <= up <= news_ts + 3 * 86400):
             continue
         fresh.append(r)
         if len(fresh) >= 3:
             break
+    if want:                                                         # اونایی که شماره‌ی فصل درست رو دارن اول
+        fresh.sort(key=lambda r: _season(r["title"]) != want)
     pick, sure = mod._trailer_pick(names, fresh)
+    if pick and want and want >= 2 and _season(pick["title"]) != want:
+        sure = False                                                 # فصلش توی اسم ویدیو نیست → قبل از انتشار ببین
     if not pick:
         raise RuntimeError(f"تریلر تازه‌ای توی یوتیوب پیدا نشد ({len(results)} نتیجه بررسی شد، اسم: {names[0]})")
     return pick["url"], sure
@@ -651,12 +720,16 @@ def main():
                     busy_until = time.time() + 15 * 60
                 try:
                     fid = {"rank": handle_rank, "insta": handle_insta, "trailer": handle_trailer}.get(kind, handle)(job)
-                    extra = fid if isinstance(fid, dict) else {"file_id": fid}
-                    cloud("done", result={"job_id": job["id"], "ok": True, **extra})
-                    log("   ✅ فرستاده شد")
                 except Exception as exc:
                     cloud("done", result={"job_id": job["id"], "ok": False, "error": str(exc)[:300]})
                     log(f"   ❌ {exc}")
+                    continue
+                extra = fid if isinstance(fid, dict) else {"file_id": fid}
+                try:                                             # کار انجام شد؛ اگه خبر دادنش نشد «خطا» حساب نشه
+                    cloud("done", result={"job_id": job["id"], "ok": True, **extra})
+                    log("   ✅ فرستاده شد")
+                except Exception as exc:
+                    log(f"   ⚠️ کار انجام شد ولی به بات نرسید ({exc}); دور بعد دوباره")
         except KeyboardInterrupt:
             raise
         except Exception:
