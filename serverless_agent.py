@@ -85,7 +85,7 @@ export default async function (input) {
     const out = {}; const t = async (name, f) => { try { const r = await f(); out[name] = JSON.stringify(r).slice(0, 200); } catch (e) { out[name] = 'ERR ' + e.message; } };
     await t('get', () => p.kv.get('cfg:channel'));
     await t('set', () => p.kv.set('cfg:dbgtest', Date.now()));
-    await t('limit5', () => db.select().from(kv).where(like(kv.key, 'cfg:%')).limit(5).all());
+    await t('limit5', () => db.select({ k: kv.key }).from(kv).where(like(kv.key, 'cfg:%')).limit(5).all());
     await t('count', () => db.select({ n: sql`count(*)` }).from(kv).all());
     await t('countlike', () => db.select({ n: sql`count(*)` }).from(kv).where(like(kv.key, 'news:%')).all());
     await t('keysonly', () => db.select({ k: kv.key }).from(kv).where(like(kv.key, 'job:%')).all());
