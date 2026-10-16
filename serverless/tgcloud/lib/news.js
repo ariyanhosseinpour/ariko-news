@@ -349,9 +349,12 @@ export async function clearImageJobs(p) {
 export async function redoNews(p, words) {
   const want = (words || []).map((w) => String(w).toLowerCase().trim()).filter(Boolean);
   const redone = [];
-  for (const { value: n } of await p.kv.list("news:")) {
-    if (!n || n.status === "posted" || n.status === "replaced") continue;
-    if (!want.some((w) => String(n.title || "").toLowerCase().includes(w))) continue;
+  const all = (await p.kv.list("news:")).map((r) => r.value).filter((n) => n && want.some((w) => String(n.title || "").toLowerCase().includes(w)));
+  for (const n of all) {
+    if (n.status === "posted") continue;
+    // قبلاً redo شده ولی نسخه‌ی جدید ساخته نشد (مثلاً «تکراری» حساب شد) → دوباره، بدون رکورد زنده
+    if (n.status === "replaced" && all.some((m) => m.link === n.link && m.status !== "replaced")) continue;
+    if (n.status === "replaced" && redone.includes(n.title)) continue;
     n.status = "replaced";
     await p.kv.set("news:" + n.id, n);
     await p.kv.del("job:j" + n.id); await p.kv.del("job:t" + n.id);
