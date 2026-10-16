@@ -65,7 +65,7 @@ def log(text):
 
 # ماژول کوچیکی که فقط موقع اجرا فرستاده میشه (deploy نمیشه) و توابع lib/news.js رو صدا می‌زنه
 PC_MODULE = """
-import { platform } from '../lib/platform.js';
+import { platform, storageName } from '../lib/platform.js';
 import { parseArticle, parseFeed } from '../lib/core.js';
 import db, { like, sql } from 'sdk/db';
 import { kv as kvTable } from '../schema.js';
@@ -75,6 +75,11 @@ export default async function (input) {
   if (input.op === 'poll') return { jobs: await agentPoll(p), updates: await agentUpdates(p) };
   if (input.op === 'done') return await agentDone(p, input.result || {});
   if (input.op === 'collect') return await collect(p, input.prefetched || null);
+  if (input.op === 'agentstat') {
+    const seen = Number(await p.kv.get('cfg:agent_seen')) || 0;
+    const jobs = (await p.kv.list('job:')).map((r) => ({ key: r.key, type: r.value && r.value.type, at: r.value && r.value.at }));
+    return { storage: storageName(), agent_seen_sec_ago: seen ? Math.round((Date.now() - seen) / 1000) : null, jobs };
+  }
   if (input.op === 'restore') {
     const c = input.cfg || {};
     for (const [k, v] of Object.entries(c)) await p.kv.set('cfg:' + k, v);
@@ -485,7 +490,11 @@ def main():
             except Exception as exc:
                 log(f"❌ {url} :: {str(exc)[:120]}")
         return
+    if "--agentstat" in sys.argv:                                # کامپیوتر آخرین بار کی وصل شده
+        log(json.dumps(cloud("agentstat"), ensure_ascii=False))
+        return
     if "--dbg" in sys.argv:
+        log(json.dumps(cloud("agentstat"), ensure_ascii=False))
         log(json.dumps(cloud("dbg"), ensure_ascii=False))
         log(json.dumps(cloud("dbg2"), ensure_ascii=False))
         return
