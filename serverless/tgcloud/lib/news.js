@@ -356,6 +356,7 @@ export async function redoNews(p, words) {
     await p.kv.set("news:" + n.id, n);
     await p.kv.del("job:j" + n.id); await p.kv.del("job:t" + n.id);
     await p.kv.del("seen:" + hashKey(n.link)); await p.kv.del("retry:" + hashKey(n.link));
+    if (n.anime) await p.kv.del("dup:" + hashKey(norm(n.anime) + "|" + eventType(n.title, n.summary)));   // وگرنه «تکراری» حساب میشه
     redone.push(n.title);
   }
   return { redone };
