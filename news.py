@@ -14198,12 +14198,92 @@ def _insta_show(uid: int, new_message: bool = False):
         try:
             bot.edit_message_media(InputMediaPhoto(bio, caption=caption), chat_id=uid,
                                    message_id=sess["msg_id"], reply_markup=kb)
+            _insta_persist(uid, sess)
             return
         except Exception as exc:
             logger.info("Insta preview edit failed, sending new: %s", exc)
             bio.seek(0)
     msg = bot.send_photo(uid, bio, caption=caption, reply_markup=kb)
     sess["msg_id"] = msg.message_id
+    _insta_persist(uid, sess)
+
+
+_INSTA_STORE = os.path.join(DATA_DIR, "insta_sessions.json")
+_INSTA_KEEP_DIR = os.path.join(DATA_DIR, "insta_keep")
+_INSTA_FIELDS = ("item_id", "cands", "idx", "focus", "zoom", "title", "subtitle", "tag", "caption", "ai", "bw",
+                 "msg_id", "slide2", "adj", "subject", "focus_manual", "ready", "up_note", "ps_doc")
+_insta_store_lock = threading.Lock()
+
+
+def _insta_persist(uid: int, sess):
+    """حالت سبک جلسه روی دیسک (بدون خود عکس‌ها) تا بعد از ری‌استارت بات یا ساختن پست یه خبر دیگه،
+    دکمه‌های پیش‌نمایش قبلی هم کار کنن. صحنه‌ی تریلر/عکس آپلودی یه بار به‌صورت فایل نگه داشته میشه."""
+    try:
+        cands = []
+        for i, c in enumerate(sess.get("cands") or []):
+            c = dict(c)
+            if c.get("kind") in ("frame", "upload"):
+                im = (sess.get("orig") or {}).get(i) or (sess.get("images") or {}).get(i)
+                os.makedirs(_INSTA_KEEP_DIR, exist_ok=True)
+                path = os.path.join(_INSTA_KEEP_DIR, f"{sess['item_id']}_{hashlib.md5(c['ref'].encode()).hexdigest()[:10]}.png")
+                if im is None and not os.path.exists(path):
+                    continue
+                if not os.path.exists(path):
+                    im.save(path)
+                c = {"kind": "file", "ref": path, "label": c.get("label", "")}
+            cands.append(c)
+        if len(cands) != len(sess.get("cands") or []):
+            return                                   # اندیس‌ها جابه‌جا میشدن؛ این بار ذخیره نمیشه
+        data = {}
+        for k in _INSTA_FIELDS:
+            v = sess.get(k)
+            if isinstance(v, set):
+                v = sorted(v)
+            elif isinstance(v, dict):
+                v = {str(a): (list(b) if isinstance(b, tuple) else b) for a, b in v.items()}
+            data[k] = v
+        data["cands"] = cands
+        data["saved"] = time.time()
+        with _insta_store_lock:
+            try:
+                with open(_INSTA_STORE, encoding="utf-8") as fh:
+                    store = json.load(fh)
+            except Exception:
+                store = {}
+            store[f"{uid}:{sess['item_id']}"] = data
+            # فقط ۱۵ تای آخر و ۳ روز اخیر
+            keep = sorted(store.items(), key=lambda kv: kv[1].get("saved", 0), reverse=True)[:15]
+            store = {k: v for k, v in keep if time.time() - v.get("saved", 0) < 3 * 86400}
+            tmp = _INSTA_STORE + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(store, fh, ensure_ascii=False, default=str)
+            os.replace(tmp, _INSTA_STORE)
+    except Exception as exc:
+        logger.info("Insta session persist failed: %s", exc)
+
+
+def _insta_restore(uid: int, item_id: int):
+    """جلسه‌ی ذخیره‌شده‌ی همین خبر رو برمی‌گردونه (عکس‌ها دوباره دانلود میشن)؛ نبود → None."""
+    try:
+        with _insta_store_lock, open(_INSTA_STORE, encoding="utf-8") as fh:
+            data = json.load(fh).get(f"{uid}:{item_id}")
+    except Exception:
+        return None
+    if not data or not data.get("cands"):
+        return None
+    sess = {k: data.get(k) for k in _INSTA_FIELDS}
+    for k in ("focus", "zoom", "subject", "up_note"):
+        sess[k] = {int(a): (tuple(b) if k == "focus" and isinstance(b, list) else b)
+                   for a, b in (data.get(k) or {}).items()}
+    sess["focus_manual"] = set(data.get("focus_manual") or [])
+    sess["up_tried"] = set()
+    sess["images"], sess["orig"] = {}, {}
+    sess["touched"] = True
+    sess["idx"] = min(int(sess.get("idx") or 0), len(sess["cands"]) - 1)
+    with _insta_lock:
+        _insta_sessions[uid] = sess
+    logger.info("Insta session restored uid=%s item=%s", uid, item_id)
+    return sess
 
 
 def _insta_upload_only_markup(item_id: int):
@@ -14436,13 +14516,19 @@ def insta_button_callback(call):
     _, action, item_id = call.data.split(":", 2)
     item_id = int(item_id)
     sess = _insta_sessions.get(uid)
+    if action not in ("upload", "close") and (not sess or sess["item_id"] != item_id):
+        # بات ری‌استارت شده یا وسطش پست یه خبر دیگه ساخته شده → همون جلسه از روی دیسک برمی‌گرده
+        sess = _insta_restore(uid, item_id)
+        if sess and call.message:
+            sess["msg_id"] = call.message.message_id
     if sess and sess["item_id"] == item_id:
         sess["touched"] = True                       # بعد از هر دکمه، ترتیب/عکس کاور خودکار عوض نمیشه
-    if action != "upload" and (not sess or sess["item_id"] != item_id):
-        bot.answer_callback_query(call.id, "این پیش‌نمایش قدیمیه؛ دوباره «🎨 پست اینستاگرام» رو بزن.", show_alert=True)
+    if action not in ("upload", "close") and (not sess or sess["item_id"] != item_id):
+        bot.answer_callback_query(call.id, "این پیش‌نمایش پیدا نشد؛ دوباره «🎨 پست اینستاگرام» رو بزن.", show_alert=True)
         return
     if action == "close":
-        _insta_sessions.pop(uid, None)
+        if sess and sess["item_id"] == item_id:
+            _insta_sessions.pop(uid, None)
         bot.answer_callback_query(call.id, "بسته شد.")
         try:
             bot.edit_message_reply_markup(uid, call.message.message_id, reply_markup=None)
@@ -14924,6 +15010,7 @@ def _insta_save(uid: int):
                                   "اگه بخوای، /insta_template off بزن تا فعلاً خود بات بسازه.")
             return
         sess["ps_doc"] = {"stem": stem, "jpg": jpg, "remote": _ps_remote()}
+        _insta_persist(uid, sess)
         kb = InlineKeyboardMarkup()
         kb.row(InlineKeyboardButton("📤 اوکیه، خروجی بگیر", callback_data=f"ig:psout:{sess['item_id']}"),
                InlineKeyboardButton("🗑 بیخیال", callback_data=f"ig:psdrop:{sess['item_id']}"))
