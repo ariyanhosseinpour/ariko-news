@@ -13645,31 +13645,109 @@ INSTA_UPSCALE_PROMPT = (
 
 
 REALESRGAN_PATH = os.environ.get("REALESRGAN_PATH", "").strip().strip('"')
+UPSCALER_EXES = ("realesrgan-ncnn-vulkan.exe", "realcugan-ncnn-vulkan.exe", "waifu2x-ncnn-vulkan.exe")
+_UPSCALER_CACHE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "upscaler_path.txt")
+_upscaler_found = None
+
+
+def _find_upscaler():
+    """مسیر exe بزرگ‌نمایی؛ اول REALESRGAN_PATH، بعد همونی که ابزار ادیت (جعبه‌ابزار) روی سیستم داره.
+    یه بار می‌گرده و نتیجه رو توی upscaler_path.txt نگه می‌داره."""
+    global _upscaler_found
+    if REALESRGAN_PATH and os.path.exists(REALESRGAN_PATH):
+        return REALESRGAN_PATH
+    if _upscaler_found is not None:
+        return _upscaler_found or None
+    try:
+        with open(_UPSCALER_CACHE, encoding="utf-8") as f:
+            cached = f.read().strip()
+        if cached and os.path.exists(cached):
+            _upscaler_found = cached
+            return cached
+    except Exception:
+        pass
+    home = os.path.expanduser("~")
+    roots = [os.path.join(home, ".ariyan"), os.path.join(home, "Desktop"), os.path.join(home, "Downloads"),
+             os.path.join(home, "Documents"), os.environ.get("LOCALAPPDATA", ""), os.environ.get("APPDATA", ""),
+             os.environ.get("ProgramFiles", ""), os.environ.get("ProgramFiles(x86)", ""), "C:\\Tools", home,
+             "D:\\", "E:\\"]
+    skip = {"node_modules", ".git", "__pycache__", "packages", "temp", "cache", "windows", "$recycle.bin",
+            "microsoft", "google", "mozilla", "steamapps"}
+    deadline = time.time() + 25
+    found = {}
+    for root in roots:
+        if not root or not os.path.isdir(root):
+            continue
+        base = root.rstrip("\\/").count(os.sep)
+        for cur, dirs, files in os.walk(root):
+            if time.time() > deadline:
+                break
+            low = {f.lower(): f for f in files}
+            for name in UPSCALER_EXES:
+                if name in low and name not in found:
+                    found[name] = os.path.join(cur, low[name])
+            if UPSCALER_EXES[0] in found:
+                break
+            if cur.count(os.sep) - base >= 5:
+                dirs[:] = []
+            else:
+                dirs[:] = [d for d in dirs if d.lower() not in skip]
+        if UPSCALER_EXES[0] in found or time.time() > deadline:
+            break
+    path = next((found[n] for n in UPSCALER_EXES if n in found), "")
+    _upscaler_found = path
+    if path:
+        logger.info("Upscaler found: %s", path)
+        try:
+            with open(_UPSCALER_CACHE, "w", encoding="utf-8") as f:
+                f.write(path)
+        except Exception:
+            pass
+    return path or None
+
+
+if os.name == "nt":                                    # گشتن دنبال exe از همون اول، که اولین کاور معطل نشه
+    threading.Thread(target=_find_upscaler, daemon=True).start()
+
+def _upscaler_cmd(exe, src, dst, need):
+    """دستور اجرای exe با بهترین مدل انیمه‌ای که کنارش هست."""
+    name = os.path.basename(exe).lower()
+    models = os.path.join(os.path.dirname(exe), "models")
+    have = set(os.listdir(models)) if os.path.isdir(models) else set()
+    if name.startswith("realcugan"):
+        return [exe, "-i", src, "-o", dst, "-s", "4" if need > 2.2 else "2", "-n", "-1"]
+    if name.startswith("waifu2x"):
+        return [exe, "-i", src, "-o", dst, "-s", "2", "-n", "1"]
+    if "realesrgan-x4plus-anime.param" in have:          # بهترین مدل برای عکس ثابت انیمه (فقط ۴ برابر)
+        return [exe, "-i", src, "-o", dst, "-n", "realesrgan-x4plus-anime", "-s", "4"]
+    return [exe, "-i", src, "-o", dst, "-n", "realesr-animevideov3", "-s", "4" if need > 2.2 else "2"]
 
 
 def _insta_esrgan_upscale(img):
-    """بزرگ‌نمایی مخصوص انیمه با Real-ESRGAN روی خود کامپیوتر (realesrgan-ncnn-vulkan.exe)؛
-    چیزی اضافه/عوض نمی‌کنه، فقط تیزتر و بزرگ‌تر. اگه تنظیم نشده بود: (None, "")."""
+    """بزرگ‌نمایی مخصوص انیمه روی خود کامپیوتر (Real-ESRGAN / Real-CUGAN ابزار ادیت)؛
+    چیزی اضافه/عوض نمی‌کنه، فقط تیزتر و بزرگ‌تر. اگه پیدا نشد: (None, "")."""
     import subprocess
     import tempfile as _tf
     from PIL import Image
-    if not REALESRGAN_PATH or not os.path.exists(REALESRGAN_PATH):
+    exe = _find_upscaler()
+    if not exe:
         return None, ""
     folder = _tf.mkdtemp(prefix="ariko_esr_")
     src, dst = os.path.join(folder, "in.png"), os.path.join(folder, "out.png")
     try:
         img.convert("RGB").save(src)
         need = max(insta_cover.PSD_SIZE[0] / img.width, insta_cover.PSD_SIZE[1] / img.height)
-        scale = "4" if need > 2.2 else "2"
-        cmd = [REALESRGAN_PATH, "-i", src, "-o", dst, "-n", "realesr-animevideov3", "-s", scale]
-        res = subprocess.run(cmd, capture_output=True, timeout=240, cwd=os.path.dirname(REALESRGAN_PATH))
+        cmd = _upscaler_cmd(exe, src, dst, need)
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        res = subprocess.run(cmd, capture_output=True, timeout=240, cwd=os.path.dirname(exe), creationflags=flags)
         if not os.path.exists(dst):
-            return None, f"Real-ESRGAN نشد: {(res.stderr or b'').decode('utf-8', 'ignore')[-200:]}"
+            return None, f"بزرگ‌نمایی ابزار ادیت نشد: {(res.stderr or b'').decode('utf-8', 'ignore')[-200:]}"
         out = Image.open(dst)
         out.load()
-        return out.convert("RGB"), f"✨ کیفیت با Real-ESRGAN بیشتر شد ({img.width}x{img.height} → {out.width}x{out.height})"
+        return out.convert("RGB"), (f"✨ کیفیت با هوش مصنوعی ابزار ادیت بیشتر شد "
+                                    f"({img.width}x{img.height} → {out.width}x{out.height})")
     except Exception as exc:
-        return None, f"Real-ESRGAN نشد: {str(exc)[:150]}"
+        return None, f"بزرگ‌نمایی ابزار ادیت نشد: {str(exc)[:150]}"
     finally:
         for f in (src, dst):
             try:
