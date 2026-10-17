@@ -406,6 +406,39 @@ def _wrap(tokens, font, draw, max_w):
     return lines
 
 
+def _layout(tokens, font, draw, max_w):
+    """خط‌های تیتر به سبک پست‌های ادمین: اسم انیمه (تیکه‌ی زرد) از اول یه خط شروع میشه،
+    «و» بین دو اسم و آخر تیتر («منتشر شد!») اگه جا بشه ته خط اسم میان.
+    «اولین تریلر فصل دوم انیمه‌ی / Solo Leveling منتشر شد!». تیتر بدون اسم زرد: شکستن متوازن معمولی."""
+    if not any(c != WHITE for _, c in tokens):
+        return _wrap(tokens, font, draw, max_w)
+    first = next(i for i, (_, c) in enumerate(tokens) if c != WHITE)
+    lead, rest = tokens[:first], tokens[first:]
+    segs = []                                       # [(زرده؟, توکن‌ها)]
+    for tok in rest:
+        y = tok[1] != WHITE
+        if segs and segs[-1][0] == y:
+            segs[-1][1].append(tok)
+        else:
+            segs.append((y, [tok]))
+    lines = []
+    if lead:
+        # پیشوند خیلی کوتاه («انیمه‌ی محبوب») تنها توی یه خط نمی‌مونه، اگه با اسم جا بشه
+        if len(lead) <= 2 and _line_w(lead + segs[0][1], font, draw) <= max_w:
+            segs[0] = (True, lead + segs[0][1])
+        else:
+            lines += _wrap(lead, font, draw, max_w)
+    for yellow, toks in segs:
+        if yellow:
+            lines += _wrap(toks, font, draw, max_w)                     # اسم از اول خط
+            continue
+        if lines and _line_w(lines[-1] + toks, font, draw) <= max_w:    # «و» / «منتشر شد!» ته همون خط
+            lines[-1] = lines[-1] + toks
+        else:
+            lines += _wrap(toks, font, draw, max_w)
+    return lines
+
+
 def _line_w(line, font, draw):
     space = draw.textlength(' ', font=font) * WORD_SPACE
     return sum(_word_w(t[0], font, draw) for t in line) + space * (len(line) - 1)
@@ -483,13 +516,23 @@ def _fit_title(title_runs, fonts_dir, draw, ts=1.0):
     """(فونت، اندازه، خط‌ها) تیتر؛ تیتر طولانی کمی کوچیک‌تر میشه تا ۳ خط جا بشه."""
     L = LAYOUT
     size = L['title_size'] * ts
+    names = sum(1 for _, c in title_runs if c != WHITE)
+    max_lines = 3 + max(0, names - 1)               # هر اسم خط خودش رو داره؛ دو اسم → تا ۴ خط
     tf = _font('title', size, fonts_dir)
-    lines = _wrap(_tokens(title_runs, tf, draw, L['title_max_w']), tf, draw, L['title_max_w'])
-    while (len(lines) > 3 or any(_line_w(ln, tf, draw) > L['title_max_w'] for ln in lines)) \
+    lines = _layout(_tokens(title_runs, tf, draw, L['title_max_w']), tf, draw, L['title_max_w'])
+    while (len(lines) > max_lines or any(_line_w(ln, tf, draw) > L['title_max_w'] for ln in lines)) \
             and size > L['title_size'] * ts * 0.62:
         size *= 0.94
         tf = _font('title', size, fonts_dir)
-        lines = _wrap(_tokens(title_runs, tf, draw, L['title_max_w']), tf, draw, L['title_max_w'])
+        lines = _layout(_tokens(title_runs, tf, draw, L['title_max_w']), tf, draw, L['title_max_w'])
+    # کمی کوچیک‌تر (تا ۲۲٪، مثل کاری که ادمین دستی می‌کنه) اگه یه خط کمتر بشه («منتشر شد!» تنها توی یه خط نمونه)
+    s2 = size
+    while s2 > L['title_size'] * ts * 0.78:
+        s2 *= 0.96
+        f2 = _font('title', s2, fonts_dir)
+        l2 = _layout(_tokens(title_runs, f2, draw, L['title_max_w']), f2, draw, L['title_max_w'])
+        if len(l2) < len(lines) and all(_line_w(ln, f2, draw) <= L['title_max_w'] for ln in l2):
+            return f2, s2, l2
     return tf, size, lines
 
 

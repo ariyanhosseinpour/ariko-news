@@ -13163,7 +13163,11 @@ Rules:
   should get at a glance — told with its most interesting angle, NOT minor details. Minor details (studio, staff, platform,
   source manga/author, exact dates) belong in the caption, never on the cover.
   Find the angle: how long it ran / how long since, how close it is, first-ever, return, confirmation with season/year,
-  delay, a surprising number that IS the news, an anniversary. Natural length (usually 6-13 words); use «!» for big news.
+  delay, a surprising number that IS the news, an anniversary. Use «!» for big news.
+  Keep it SHORT: apart from the anime name(s), at most 7 Persian words. Best shape: «<what happened> انیمه‌ی [Name] <verb>!»
+  (on the cover the name starts its own line and «منتشر شد!» sits right after it). Put EVERY anime name, in English,
+  inside [ ] — with two anime: «همکاری انیمه‌ی [A] و [B] منتشر شد!». Don't add filler like «جذاب/دیدنی/ویژه» to a
+  two-name title; two names are long already.
   Examples of the right style (facts are examples only):
   «انیمه‌ی محبوب [Dr. Stone] پس از ۷ سال به پایان رسید!»
   «تنها یک هفته تا پخش فصل سوم انیمه‌ی [Frieren] باقی مانده!»
@@ -13176,10 +13180,11 @@ Rules:
   Use only facts from the input; if the input has no such angle, keep it simple and clear.
   Do NOT copy or lightly rephrase the headline of "Our Persian channel post" — that one is written for Telegram;
   the cover needs its own short punchy headline. No «» quotes around the title or the name.
-- subtitle: Persian, short (3-9 words), only if there is ONE more fact fans care about at a glance (e.g. the release
-  season when the title is about a trailer, or the episode count). Never repeat the title, never studio/staff/platform
-  trivia. Empty string is fine and often better.
-- tag: 1-2 Persian words: «خبر رسمی» for official announcements, «شایعه» for leaks/rumors, «خبر تلخ» for deaths/sad news, else «خبر».
+- subtitle: Persian, short (4-9 words): ONE more fact fans care about at a glance, from the input — e.g. the release
+  date/season («تاریخ پخش انیمه زمستان ۲۰۲۷ اعلام شده»), when/where it airs or premieres («فیلم Dear Friend امروز در
+  سینماهای ژاپن اکران شد»), or the episode count. Anime/movie names in English, no [ ]. Never repeat the title, never
+  studio/staff/platform trivia. Empty string only if the input has no such fact.
+- tag: 1-2 Persian words: «خبر رسمی» for official announcements (trailers, visuals, dates, confirmations), «شایعه» for leaks/rumors, «خبر تلخ» for deaths/sad news, else «خبر».
 - mood: "sad" only for deaths, cancellations, tragedies; else "normal".
 - caption: Instagram caption in friendly spoken Persian, 2-5 short sentences: the news, plus the details that were
   kept off the cover (studio, platform, source manga/author, exact dates, episode info) — facts from the input only,
