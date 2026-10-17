@@ -24,6 +24,7 @@ import json
 import os
 import re
 import sys
+import threading
 import time
 import traceback
 import urllib.parse
@@ -216,8 +217,28 @@ def _with_secrets(out):
     return out
 
 
+_CLOUD_WAIT = {"until": 0.0}
+_CLOUD_LOCK = threading.Lock()
+
+
 def cloud(op, **args):
-    """یه تابع lib/news.js رو روی سرور تلگرام اجرا می‌کنه (همون API که «npx tgcloud run» داره)."""
+    """یه تابع lib/news.js رو روی سرور تلگرام اجرا می‌کنه (همون API که «npx tgcloud run» داره).
+    «Too many requests: retry after N» → همه‌ی تردها N ثانیه صبر می‌کنن و همون کار دوباره فرستاده میشه."""
+    for attempt in range(5):
+        wait = _CLOUD_WAIT["until"] - time.time()
+        if wait > 0:
+            time.sleep(wait)
+        try:
+            return _cloud_once(op, **args)
+        except RuntimeError as exc:
+            m = re.search(r"too many requests.*?retry after (\d+)", str(exc), re.I)
+            if not m or attempt == 4:
+                raise
+            with _CLOUD_LOCK:
+                _CLOUD_WAIT["until"] = max(_CLOUD_WAIT["until"], time.time() + int(m.group(1)) + 1)
+
+
+def _cloud_once(op, **args):
     app_id = TG_CLOUD.split(":", 1)[0]
     body = json.dumps({"module": "endpoints/pc_agent", "sources": _sources(), "args": {"op": op, **args},
                        "ctx": {}}).encode("utf-8")
@@ -1008,7 +1029,7 @@ def main():
             raise
         except Exception:
             log("⚠️ " + traceback.format_exc(limit=1).strip().splitlines()[-1])
-        time.sleep(2 if time.time() < busy_until else 6)        # وسط کار اینستاگرام: دکمه‌ها سریع جواب بدن
+        time.sleep(3 if time.time() < busy_until else 10)       # وسط کار اینستاگرام: دکمه‌ها سریع‌تر جواب بدن
 
 
 if __name__ == "__main__":
