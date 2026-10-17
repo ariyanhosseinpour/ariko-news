@@ -10143,7 +10143,8 @@ def _news_anilist_lookup(name: str) -> dict:
             meta = {}
         max_age = 7 * 86400 if meta else 86400
         # کش‌های قدیمی فیلد cover (پوستر) رو ندارن → یه بار دوباره گرفته میشن
-        if now - int(row["fetched_at"] or 0) < max_age and (not meta or ("cover" in meta and "title_native" in meta and "synonyms" in meta)):
+        if now - int(row["fetched_at"] or 0) < max_age and (not meta or ("cover" in meta and "title_native" in meta and "synonyms" in meta
+                                                                          and "banner" in meta)):
             return meta
 
     query = """
@@ -10156,6 +10157,7 @@ def _news_anilist_lookup(name: str) -> dict:
         genres
         popularity
         coverImage { extraLarge large }
+        bannerImage
         description(asHtml: false)
         studios(isMain: true) { nodes { name } }
       }
@@ -10200,6 +10202,7 @@ def _news_anilist_lookup(name: str) -> dict:
                 "description": desc,
                 "studio": " & ".join(studios[:2]),
                 "popularity": int(media.get("popularity") or 0),
+                "banner": media.get("bannerImage") or "",
                 "cover": ((media.get("coverImage") or {}).get("extraLarge")
                           or (media.get("coverImage") or {}).get("large") or ""),
             }
@@ -13342,9 +13345,11 @@ def _insta_candidates(row) -> list:
         logger.info("Insta fallback poster failed item=%s", row["id"])
     try:                                            # پوستر رسمی خود انیمه از AniList
         name = (row["anime_eng_name"] or facts.get("anime_eng_name") or row["anime_display"] or "").strip()
-        cover = (_news_anilist_lookup(name) or {}).get("cover") if len(name) >= 3 else ""
-        if cover:
-            add("url", cover, "پوستر رسمی (AniList)")
+        al = (_news_anilist_lookup(name) or {}) if len(name) >= 3 else {}
+        if al.get("banner"):                        # بنر افقی رسمی: معمولاً شخصیت‌های اصلی، بدون نوشته (برای کاور عالیه)
+            add("url", al["banner"], "بنر رسمی (AniList)")
+        if al.get("cover"):
+            add("url", al["cover"], "پوستر رسمی (AniList)")
     except Exception:
         logger.info("Insta AniList poster failed item=%s", row["id"])
     try:                                            # پوستر و صحنه‌های باکیفیت (تا 4K) از TMDB، اگه کلیدش تنظیم شده
@@ -13628,7 +13633,7 @@ def _insta_render(sess):
     if sess.get("ready"):                          # کاور آماده‌ی خود ادمین: فقط اندازه‌ی کادر
         return insta_cover.fit_cover(img, insta_cover.PSD_SIZE, (0.5, 0.5))
     return insta_cover.render_cover(img, sess["title"], sess["subtitle"], sess["tag"], INSTA_FONT_DIRS,
-                                    logo=_insta_logo(), focus=focus, bw=sess["bw"], zoom=zoom)
+                                    logo=_insta_logo(), focus=focus, bw=sess["bw"], zoom=zoom, adj=sess.get("adj"))
 
 
 INSTA_UPSCALE_PROMPT = (
@@ -13935,13 +13940,45 @@ def _insta_add_frames(uid: int):
     _insta_show(uid)
 
 
+INSTA_HI_COLORS = [("زرد", (251, 221, 27)), ("نارنجی", (255, 145, 30)), ("صورتی", (255, 95, 170)),
+                   ("فیروزه‌ای", (60, 220, 210)), ("قرمز", (255, 70, 70)), ("سبز", (100, 220, 120)),
+                   ("آبی", (90, 170, 255)), ("بنفش", (185, 125, 255)), ("سفید", (255, 255, 255))]
+INSTA_SIZE_STEP = 0.08          # هر بار ۸٪ بزرگ‌تر/کوچیک‌تر
+INSTA_MOVE_STEP = 20            # هر بار ۲۰ پیکسل (کادر ۱۴۴۰) بالا/پایین
+
+
+def _insta_text_markup(sess):
+    """منوی «🔤 تنظیم متن»: اندازه/جای تیتر و زیرنویس و رنگ بخش رنگی تیتر (هم پیش‌نمایش هم فتوشاپ)."""
+    iid = sess["item_id"]
+    a = insta_cover.adj_of(sess.get("adj"))
+    hc = tuple(a["hc"]) if a["hc"] else insta_cover.YELLOW
+    cname = next((n for n, c in INSTA_HI_COLORS if c == hc), "زرد")
+    pct = lambda k: f"{round(k * 100)}٪"
+    kb = InlineKeyboardMarkup(row_width=2)
+    kb.row(InlineKeyboardButton("🔠 تیتر بزرگ‌تر", callback_data=f"ig:tsp:{iid}"),
+           InlineKeyboardButton(f"🔠 تیتر کوچیک‌تر ({pct(a['ts'])})", callback_data=f"ig:tsm:{iid}"))
+    kb.row(InlineKeyboardButton("⬆️ تیتر بالاتر", callback_data=f"ig:tyu:{iid}"),
+           InlineKeyboardButton("⬇️ تیتر پایین‌تر", callback_data=f"ig:tyd:{iid}"))
+    kb.row(InlineKeyboardButton("🔡 زیرنویس بزرگ‌تر", callback_data=f"ig:ssp:{iid}"),
+           InlineKeyboardButton(f"🔡 زیرنویس کوچیک‌تر ({pct(a['ss'])})", callback_data=f"ig:ssm:{iid}"))
+    kb.row(InlineKeyboardButton("⬆️ زیرنویس بالاتر", callback_data=f"ig:syu:{iid}"),
+           InlineKeyboardButton("⬇️ زیرنویس پایین‌تر", callback_data=f"ig:syd:{iid}"))
+    kb.row(InlineKeyboardButton(f"🎨 رنگ بخش رنگی: {cname} (بزن عوض شه)", callback_data=f"ig:hcn:{iid}"))
+    kb.row(InlineKeyboardButton("↩️ متن مثل قالب", callback_data=f"ig:tres:{iid}"),
+           InlineKeyboardButton("✅ تموم، برگشت", callback_data=f"ig:tmenu:{iid}"))
+    return kb
+
+
 def _insta_markup(sess):
     iid = sess["item_id"]
+    if sess.get("txtmenu") and not sess.get("ready"):
+        return _insta_text_markup(sess)
     kb = InlineKeyboardMarkup(row_width=2)
     n = len(sess["cands"])
     if n > 1:
         kb.row(InlineKeyboardButton("◀️ عکس قبلی", callback_data=f"ig:prev:{iid}"),
                InlineKeyboardButton(f"🖼 عکس بعدی ({sess['idx'] + 1}/{n})", callback_data=f"ig:next:{iid}"))
+        kb.row(InlineKeyboardButton(f"🗂 دیدن همه‌ی {n} عکس و انتخاب", callback_data=f"ig:gal:{iid}"))
     img = sess["images"].get(sess["idx"])
     over = insta_cover.overflow(img, insta_cover.PSD_SIZE) if img is not None and not sess.get("ready") else ""
     zoom = (sess.get("zoom", {}).get(sess["idx"]) or insta_cover.default_zoom(img, insta_cover.PSD_SIZE)) if img is not None else ""
@@ -13958,6 +13995,7 @@ def _insta_markup(sess):
     if not sess.get("ready"):
         kb.row(InlineKeyboardButton("🎨 رنگی کن" if sess["bw"] else "⚫️ سیاه‌وسفید", callback_data=f"ig:bw:{iid}"),
                InlineKeyboardButton("✏️ ویرایش متن", callback_data=f"ig:text:{iid}"))
+        kb.row(InlineKeyboardButton("🔤 اندازه، جا و رنگ متن", callback_data=f"ig:tmenu:{iid}"))
     if sess["cands"][sess["idx"]]["kind"] == "upload":   # فایل آپلودی خودش کاور کامل بود؟
         kb.row(InlineKeyboardButton("🎨 متن و گرادیان بات رو بذار" if sess.get("ready")
                                     else "🧾 این فایل خودش کاور کامله (دست نزن)", callback_data=f"ig:ready:{iid}"))
@@ -13978,6 +14016,42 @@ def _insta_markup(sess):
     kb.row(InlineKeyboardButton(save_label, callback_data=f"ig:save:{iid}"),
            InlineKeyboardButton("❌ بستن", callback_data=f"ig:close:{iid}"))
     return kb
+
+
+def _insta_gallery(uid: int):
+    """همه‌ی عکس‌های پیدا شده به‌صورت آلبوم شماره‌دار + دکمه‌ی شماره‌ها؛ ادمین مستقیم انتخاب می‌کنه (به‌جای قبلی/بعدی)."""
+    from telebot.types import InputMediaPhoto
+    sess = _insta_sessions.get(uid)
+    n = len(sess["cands"])
+    bot.send_message(uid, f"⏳ دارم {n} تا عکس رو آماده می‌کنم…")
+    thumbs = []
+    for i in range(n):
+        img = sess["images"].get(i)
+        if img is None:
+            try:
+                img = _insta_load(sess["cands"][i])
+                sess["images"][i] = img
+                sess.setdefault("orig", {})[i] = img
+            except Exception as exc:
+                logger.info("Insta gallery load %s failed: %s", i, exc)
+                continue
+        t = img.convert("RGB")
+        t.thumbnail((720, 720), Image.LANCZOS)
+        bio = io.BytesIO()
+        t.save(bio, "JPEG", quality=82)
+        bio.seek(0)
+        label = re.sub(r"\s*⭐.*$", "", sess["cands"][i]["label"])
+        thumbs.append((i, bio, f"{i + 1}) {label} — {img.width}×{img.height}"))
+    for k in range(0, len(thumbs), 10):
+        chunk = thumbs[k:k + 10]
+        try:
+            bot.send_media_group(uid, [InputMediaPhoto(b, caption=c) for _i, b, c in chunk])
+        except Exception as exc:
+            logger.info("Insta gallery album failed: %s", exc)
+    kb = InlineKeyboardMarkup(row_width=5)
+    kb.add(*[InlineKeyboardButton(str(i + 1), callback_data=f"ig:p{i}:{sess['item_id']}") for i, _b, _c in thumbs])
+    bot.send_message(uid, "👆 شماره‌ی عکسی که می‌خوای رو بزن تا کاور با همون ساخته بشه.\n"
+                          "عکس خوبی نبود؟ «🎞 صحنه از تریلر» یا «📤 عکس یا PSD خودم».", reply_markup=kb)
 
 
 def _insta_status_text(sess) -> str:
@@ -14240,6 +14314,30 @@ def _insta_action(uid: int, action: str):
                                                           if img is not None else "cover")
             order = list(insta_cover.ZOOMS)
             sess["zoom"][idx] = order[(order.index(cur) + 1) % len(order)] if cur in order else order[0]
+        elif action == "tmenu":
+            sess["txtmenu"] = not sess.get("txtmenu")
+        elif action in ("tsp", "tsm", "ssp", "ssm", "tyu", "tyd", "syu", "syd", "hcn", "tres"):
+            a = insta_cover.adj_of(sess.get("adj"))
+            if action == "tres":
+                a = dict(insta_cover.ADJ_DEFAULT)
+            elif action in ("tsp", "tsm", "ssp", "ssm"):
+                key = "ts" if action[0] == "t" else "ss"
+                a[key] = round(min(1.6, max(0.6, a[key] + (INSTA_SIZE_STEP if action[2] == "p" else -INSTA_SIZE_STEP))), 2)
+            elif action in ("tyu", "tyd", "syu", "syd"):
+                key = "ty" if action[0] == "t" else "sy"
+                a[key] = max(-400, min(200, a[key] + (-INSTA_MOVE_STEP if action[2] == "u" else INSTA_MOVE_STEP)))
+            else:
+                cur = tuple(a["hc"]) if a["hc"] else insta_cover.YELLOW
+                cols = [c for _n, c in INSTA_HI_COLORS]
+                a["hc"] = cols[(cols.index(cur) + 1) % len(cols)] if cur in cols else cols[0]
+            sess["adj"] = a
+        elif action == "gal":
+            return _insta_gallery(uid)
+        elif re.fullmatch(r"p\d+", action):               # از آلبوم «همه‌ی عکس‌ها»
+            n = int(action[1:])
+            if 0 <= n < len(sess["cands"]):
+                sess["idx"] = n
+                sess["ready"] = False
         elif action == "orig":
             idx = sess["idx"]
             if sess.get("orig", {}).get(idx) is not None:
@@ -14644,16 +14742,16 @@ def _ps_setup_template(path: str):
     return out, layer_map
 
 
-def _ps_prepare(template, png, title, names, tag, sub, docname, title_bottom=0, native_xy=None, logo_rgb=None):
+def _ps_prepare(template, png, title, names, tag, sub, docname, title_bottom=0, native_xy=None, logo_rgb=None, adj=None):
     if _ps_remote():
         with open(png, "rb") as fh:
             b64 = base64.b64encode(fh.read()).decode()
         return _agent_call("prepare", timeout=300, template=template, png_b64=b64, title=title, names=names,
                            tag=tag, sub=sub, docname=docname, title_bottom=float(title_bottom or 0),
                            native_xy=list(native_xy) if native_xy else None,
-                           logo_rgb=list(logo_rgb) if logo_rgb else None)
+                           logo_rgb=list(logo_rgb) if logo_rgb else None, adj=adj or {})
     return insta_photoshop.prepare(template, png, title, names, tag, sub, docname, title_bottom=title_bottom,
-                                   native_xy=native_xy, logo_rgb=logo_rgb)
+                                   native_xy=native_xy, logo_rgb=logo_rgb, adj=adj)
 
 
 def _insta_out_dir() -> str:
@@ -14730,7 +14828,9 @@ def _insta_save(uid: int):
             raw.save(png)
             native = list(offset)
             # خط‌ها رو خود بات (مثل پیش‌نمایش) می‌شکنه، نه فتوشاپ؛ خط‌ها متوازن و «شد!» تنها نمی‌مونه
-            title, names = insta_cover.title_lines_for_photoshop(sess["title"], INSTA_FONT_DIRS)
+            adj = insta_cover.adj_of(sess.get("adj"))
+            title, names = insta_cover.title_lines_for_photoshop(sess["title"], INSTA_FONT_DIRS,
+                                                                 size_px=insta_cover.LAYOUT["title_size"] * adj["ts"])
             title = insta_photoshop._ps_text(title)
             # رنگ لوگو: ناحیه‌ی گوشه‌ی بالا (بعد از گرادیان) روشنه → مشکی، وگرنه سفید
             shaded = insta_cover.apply_gradient(bg)
@@ -14739,7 +14839,7 @@ def _insta_save(uid: int):
                                                             round(size[0] * 0.04) + lw, round(size[1] * 0.025) + lw))
             _ps_prepare(template, png, title, names, sess["tag"], sess["subtitle"], stem,
                         title_bottom=meta.get("title_bottom", 0), native_xy=native,
-                        logo_rgb=insta_cover.LOGO_DARK if dark else (255, 255, 255))
+                        logo_rgb=insta_cover.LOGO_DARK if dark else (255, 255, 255), adj=sess.get("adj"))
         except Exception as exc:
             logger.exception("Insta Photoshop prepare failed")
             bot.send_message(uid, f"⚠️ فتوشاپ نتونست پست رو بسازه: {str(exc)[:400]}\n"

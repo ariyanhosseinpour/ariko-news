@@ -78,6 +78,7 @@ export default async function (input) {
   if (input.op === 'rankcheck') return await rankCheck(p, input.guids || []);
   if (input.op === 'rankadd') return await rankAdd(p, input.item || {});
   if (input.op === 'rankdone') return await rankDone(p, input);
+  if (input.op === 'gemkey') return { k: (await p.kv.get('cfg:gemini_key')) || '' };   // کلید Gemini بات برای کد قدیمی روی کامپیوتر
   if (input.op === 'agentstat') {
     const seen = Number(await p.kv.get('cfg:agent_seen')) || 0;
     const jobs = (await p.kv.list('job:')).map((r) => ({ key: r.key, type: r.value && r.value.type, at: r.value && r.value.at }));
@@ -132,12 +133,12 @@ def _remote_files():
         files = {}
         for name in z.namelist():
             rel = name.split("/", 1)[1] if "/" in name else ""
-            if rel in ("serverless_agent.py", "news.py") or (rel.startswith("serverless/tgcloud/") and rel.endswith(".js")):
+            if rel in ("serverless_agent.py",) + SYNC_FILES or (rel.startswith("serverless/tgcloud/") and rel.endswith(".js")):
                 files[rel] = z.read(name).decode("utf-8")
         if any(k.startswith("serverless/tgcloud/") for k in files):
             _remote["files"] = files
             _self_update(files.get("serverless_agent.py"))
-            _sync_news(files.get("news.py"))
+            _sync_news({n: files.get(n) for n in SYNC_FILES})
     except Exception as exc:
         log(f"⚠️ گرفتن کد جدید از گیت‌هاب نشد (با کد خود کامپیوتر ادامه میده): {exc}")
     return _remote["files"]
@@ -158,22 +159,29 @@ def _self_update(code):
     os.execv(sys.executable, [sys.executable, me] + sys.argv[1:])
 
 
-def _sync_news(code):
-    """news.py (کد بات قدیمی که تریلر/کاور/رنکینگ باهاش ساخته میشه) هم از گیت‌هاب آپدیت میشه؛ نسخه‌ی قبلی news_backup.py"""
-    if not code:
+SYNC_FILES = ("news.py", "insta_cover.py", "insta_photoshop.py")   # کد بات قدیمی (تریلر/کاور/فتوشاپ/رنکینگ)
+
+
+def _sync_news(codes):
+    """فایل‌های بات قدیمی هم از گیت‌هاب آپدیت میشن؛ نسخه‌ی قبلی هر کدوم: <اسم>_backup.py"""
+    changed = []
+    for name, code in (codes or {}).items():
+        if not code:
+            continue
+        path = os.path.join(BASE_DIR, name)
+        if os.path.exists(path):
+            with open(path, encoding="utf-8", errors="ignore") as fh:
+                old = fh.read()
+            if old.replace("\r\n", "\n") == code.replace("\r\n", "\n"):
+                continue
+            with open(os.path.join(BASE_DIR, name[:-3] + "_backup.py"), "w", encoding="utf-8", newline="") as fh:
+                fh.write(old)
+        with open(path, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(code)
+        changed.append(name)
+    if not changed:
         return
-    path = os.path.join(BASE_DIR, "news.py")
-    old = ""
-    if os.path.exists(path):
-        with open(path, encoding="utf-8", errors="ignore") as fh:
-            old = fh.read()
-        if old.replace("\r\n", "\n") == code.replace("\r\n", "\n"):
-            return
-        with open(os.path.join(BASE_DIR, "news_backup.py"), "w", encoding="utf-8", newline="") as fh:
-            fh.write(old)
-    with open(path, "w", encoding="utf-8", newline="\n") as fh:
-        fh.write(code)
-    log("🔄 news.py آپدیت شد (نسخه‌ی قبلی: news_backup.py)؛ اجرای دوباره…")
+    log(f"🔄 آپدیت شد: {', '.join(changed)} (نسخه‌ی قبلی: *_backup.py)؛ اجرای دوباره…")
     if _LOCK:                                                    # کد قدیمی ممکنه توی حافظه باشه → از نو
         _LOCK.close()
     os.execv(sys.executable, [sys.executable, os.path.abspath(__file__)] + sys.argv[1:])
@@ -440,6 +448,14 @@ def _load_old_bot():
             o.setdefault("progress_hooks", []).append(_pause_hook)
             return o
         mod._trailer_ydl_opts = opts_with_pause
+        if not getattr(mod, "GEMINI_API_KEY", ""):                # کلیدی که با «🔑 تنظیم هوش مصنوعی» به بات دادی (برای متن و انتخاب عکس کاور)
+            try:
+                key = (cloud("gemkey") or {}).get("k") or ""
+                if key:
+                    mod.GEMINI_API_KEY = key
+                    log("🤖 کلید Gemini از بات گرفته شد (متن و انتخاب عکس کاور اینستاگرام با AI)")
+            except Exception as exc:
+                log(f"⚠️ کلید Gemini از بات گرفته نشد: {str(exc)[:80]}")
         try:                                                      # آپلود کاور/PSD با اینترنت کند: وقت بیشتر + تلاش دوباره
             from telebot import apihelper
             apihelper.CONNECT_TIMEOUT = 30
