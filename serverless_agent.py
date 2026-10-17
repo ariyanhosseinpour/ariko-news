@@ -532,6 +532,31 @@ def rank_watch():
     return sent
 
 
+_INSTA_SEEN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "insta_jobs_seen.json")
+
+
+def _insta_seen(job):
+    """این درخواست پست اینستا (همون دکمه‌زدن، با زمانش) قبلاً شروع شده؟ اگه نه، ثبتش می‌کنه.
+    روی دیسک می‌مونه که بعد از ری‌استارت هم پیش‌نمایش تکراری ساخته نشه."""
+    key = f"{job['id']}:{job.get('created', '')}"
+    try:
+        with open(_INSTA_SEEN, encoding="utf-8") as fh:
+            seen = json.load(fh)
+    except Exception:
+        seen = {}
+    now = time.time()
+    seen = {k: t for k, t in seen.items() if now - t < 2 * 86400}
+    if key in seen:
+        return True
+    seen[key] = now
+    try:
+        with open(_INSTA_SEEN, "w", encoding="utf-8") as fh:
+            json.dump(seen, fh)
+    except Exception:
+        pass
+    return False
+
+
 def handle_insta(job):
     """خبر سرور → یه ردیف توی دیتابیس بات قدیمی، بعد همون «🎨 پست اینستاگرام» قدیمی (کاور + فتوشاپ) شروع میشه.
     بقیه‌ی کار (دکمه‌ها، آپلود عکس/PSD، تیتر) با آپدیت‌هایی که سرور می‌فرسته توسط همون کد قدیمی انجام میشه."""
@@ -964,6 +989,13 @@ def main():
                     continue
                 PAUSE["insta_at"] = time.time()
                 busy_until = time.time() + 15 * 60
+                if _insta_seen(job):
+                    # همین درخواست قبلاً شروع شده (خبر «انجام شد» به سرور نرسیده بود) → دوباره ساخته نمیشه
+                    try:
+                        cloud("done", result={"job_id": job["id"], "ok": True})
+                    except Exception:
+                        pass
+                    continue
                 log(f"🎨 پست اینستاگرام: {str(job.get('news', {}).get('title', ''))[:60]} …")
                 try:
                     handle_insta(job)
