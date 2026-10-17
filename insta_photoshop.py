@@ -274,8 +274,16 @@ _JSX_PREPARE = r"""
   }
   // متن‌ها: فقط نوشته و رنگ عوض میشه، جا و اندازه‌ی لایه‌ها همونیه که توی قالبه
   var title=need('TITLE');
+  // خط‌ها رو بات شکسته (مثل پیش‌نمایش)؛ کادر پاراگرافی فتوشاپ دوباره می‌شکنه و انگلیسی/فارسی قاطی میشه → متن نقطه‌ای
+  var tcx=(px(title.bounds[0])+px(title.bounds[2]))/2;
+  try{ if (title.textItem.kind==TextType.PARAGRAPHTEXT) title.textItem.kind=TextType.POINTTEXT; }catch(e){}
   setText(title, ARGS.title, ARGS.names, ARGS.hi_rgb);
+  try{ title.textItem.justification=Justification.CENTER; }catch(e){}
   scaleText(title, ARGS.title_scale);
+  var maxW=ARGS.title_max_w*px(doc.width), tw=px(title.bounds[2])-px(title.bounds[0]);
+  if (maxW>0 && tw>maxW) scaleText(title, maxW/tw);       // فونت فتوشاپ پهن‌تر بود → کمی کوچیک‌تر که از کادر نزنه
+  var dx=(ARGS.title_center ? px(doc.width)/2 : tcx)-(px(title.bounds[0])+px(title.bounds[2]))/2;
+  if (Math.abs(dx)>0.5) title.translate(dx, 0);
   // تیتر کوتاه‌تر/بلندتر از نمونه‌ی قالب: پایین تیتر (و تگ بالاش) همون‌جای قالب می‌مونه؛ فونت و اندازه دست نمی‌خوره
   var delta=ARGS.title_bottom ? ARGS.title_bottom - px(title.bounds[3]) : 0;
   var ky=px(doc.height)/1440;                              // جابه‌جایی‌های ربات روی کادر ۱۴۴۰ پیکسلیه
@@ -397,11 +405,21 @@ def prepare(template, image_png, title, names, tag, sub, docname, title_bottom=0
         "title_scale": float(adj.get("ts") or 1.0), "title_dy": float(adj.get("ty") or 0),
         "sub_scale": float(adj.get("ss") or 1.0), "sub_dy": float(adj.get("sy") or 0),
         "hi_rgb": list(adj["hc"]) if adj.get("hc") else None,
+        "title_max_w": _title_max_w(), "title_center": True,
         "template": _js_path(template), "image": _js_path(image_png), "title": title, "names": names,
         "tag": _ps_text(tag), "sub": _ps_text(sub), "docname": docname, "title_bottom": float(title_bottom or 0),
         "logo_rgb": list(logo_rgb) if logo_rgb else None,
         "native_xy": list(native_xy) if native_xy else None,
     })
+
+
+def _title_max_w():
+    """پهنای مجاز تیتر نسبت به عرض کادر (همونی که پیش‌نمایش استفاده می‌کنه)."""
+    try:
+        import insta_cover
+        return insta_cover.LAYOUT['title_max_w'] / insta_cover.PSD_SIZE[0]
+    except Exception:
+        return 0.9
 
 
 def _ps_text(text):

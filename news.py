@@ -14907,8 +14907,8 @@ def _insta_save(uid: int):
             native = list(offset)
             # خط‌ها رو خود بات (مثل پیش‌نمایش) می‌شکنه، نه فتوشاپ؛ خط‌ها متوازن و «شد!» تنها نمی‌مونه
             adj = insta_cover.adj_of(sess.get("adj"))
-            title, names = insta_cover.title_lines_for_photoshop(sess["title"], INSTA_FONT_DIRS,
-                                                                 size_px=insta_cover.LAYOUT["title_size"] * adj["ts"])
+            title, names, tk = insta_cover.title_lines_for_photoshop(sess["title"], INSTA_FONT_DIRS, ts=adj["ts"])
+            adj = dict(adj, ts=tk)                         # اندازه‌ی تیتر همونی که پیش‌نمایش داره
             title = insta_photoshop._ps_text(title)
             # رنگ لوگو: ناحیه‌ی گوشه‌ی بالا (بعد از گرادیان) روشنه → مشکی، وگرنه سفید
             shaded = insta_cover.apply_gradient(bg)
@@ -14917,7 +14917,7 @@ def _insta_save(uid: int):
                                                             round(size[0] * 0.04) + lw, round(size[1] * 0.025) + lw))
             _ps_prepare(template, png, title, names, sess["tag"], sess["subtitle"], stem,
                         title_bottom=meta.get("title_bottom", 0), native_xy=native,
-                        logo_rgb=insta_cover.LOGO_DARK if dark else (255, 255, 255), adj=sess.get("adj"))
+                        logo_rgb=insta_cover.LOGO_DARK if dark else (255, 255, 255), adj=adj)
         except Exception as exc:
             logger.exception("Insta Photoshop prepare failed")
             bot.send_message(uid, f"⚠️ فتوشاپ نتونست پست رو بسازه: {str(exc)[:400]}\n"

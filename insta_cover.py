@@ -479,6 +479,20 @@ def _draw_line(draw, line, font, y, width):
 ADJ_DEFAULT = {"ts": 1.0, "ty": 0, "ss": 1.0, "sy": 0, "hc": None}   # تنظیم دستی متن از ربات (اندازه/جا/رنگ)
 
 
+def _fit_title(title_runs, fonts_dir, draw, ts=1.0):
+    """(فونت، اندازه، خط‌ها) تیتر؛ تیتر طولانی کمی کوچیک‌تر میشه تا ۳ خط جا بشه."""
+    L = LAYOUT
+    size = L['title_size'] * ts
+    tf = _font('title', size, fonts_dir)
+    lines = _wrap(_tokens(title_runs, tf, draw, L['title_max_w']), tf, draw, L['title_max_w'])
+    while (len(lines) > 3 or any(_line_w(ln, tf, draw) > L['title_max_w'] for ln in lines)) \
+            and size > L['title_size'] * ts * 0.62:
+        size *= 0.94
+        tf = _font('title', size, fonts_dir)
+        lines = _wrap(_tokens(title_runs, tf, draw, L['title_max_w']), tf, draw, L['title_max_w'])
+    return tf, size, lines
+
+
 def adj_of(adj):
     out = dict(ADJ_DEFAULT)
     out.update({k: v for k, v in (adj or {}).items() if k in ADJ_DEFAULT and v is not None})
@@ -497,14 +511,7 @@ def render_text(img, title_runs, tag, subtitle, fonts_dir, logo=None, adj=None):
         title_runs = [(t, tuple(A["hc"]) if c != WHITE else c) for t, c in title_runs]
 
     # تیتر: وسط‌چین، شکستن خودکار خط‌ها، اسم انیمه زرد و انگلیسی
-    size = L['title_size'] * A["ts"]
-    tf = _font('title', size, fonts_dir)
-    lines = _wrap(_tokens(title_runs, tf, draw, L['title_max_w']), tf, draw, L['title_max_w'])
-    while (len(lines) > 3 or any(_line_w(ln, tf, draw) > L['title_max_w'] for ln in lines)) \
-            and size > L['title_size'] * A["ts"] * 0.62:
-        size *= 0.94                                # تیتر طولانی → کمی کوچیک‌تر تا ۳ خط جا بشه
-        tf = _font('title', size, fonts_dir)
-        lines = _wrap(_tokens(title_runs, tf, draw, L['title_max_w']), tf, draw, L['title_max_w'])
+    tf, size, lines = _fit_title(title_runs, fonts_dir, draw, A["ts"])
     leading = L['title_leading'] * size / L['title_size']
     cap = -tf.getbbox('A', anchor='ls')[1]
     full = _font('title', L['title_size'], fonts_dir)
@@ -583,16 +590,11 @@ def render_cover(bg, title, subtitle, tag, fonts_dir, logo=None, focus=None, bw=
     return render_text(img, parse_title(title), tag, subtitle, fonts_dir, logo=logo, adj=adj)
 
 
-def title_lines_for_photoshop(title, fonts_dir, size_px=None, max_w=None):
-    """شکستن خط‌های تیتر با همون فونت/اندازه‌ی قالب (مثل ساخت خود بات)، برای فتوشاپ.
-    خروجی: (متن با \r بین خط‌ها، تیکه‌های زرد هر خط)."""
-    size_px = size_px or LAYOUT['title_size']
-    max_w = (max_w or LAYOUT['title_max_w']) * 0.95     # یه کم جا که فتوشاپ خودش خط رو نشکنه
-    img = Image.new('RGB', (10, 10))
-    draw = ImageDraw.Draw(img)
-    tf = _font('title', size_px, fonts_dir)
-    runs = parse_title(title)
-    lines = _wrap(_tokens(runs, tf, draw, max_w), tf, draw, max_w)
+def title_lines_for_photoshop(title, fonts_dir, ts=1.0):
+    """شکستن خط‌های تیتر دقیقاً مثل پیش‌نمایش (همون خط‌ها و همون کوچیک شدن تیتر بلند)، برای فتوشاپ.
+    خروجی: (متن با \r بین خط‌ها، تیکه‌های زرد هر خط، ضریب اندازه نسبت به اندازه‌ی قالب)."""
+    draw = ImageDraw.Draw(Image.new('RGB', (10, 10)))
+    tf, size, lines = _fit_title(parse_title(title), fonts_dir, draw, ts)
     text_lines, names = [], []
     for line in lines:
         text_lines.append(' '.join(t[0] for t in line))
@@ -603,7 +605,7 @@ def title_lines_for_photoshop(title, fonts_dir, size_px=None, max_w=None):
             elif piece:
                 names.append(' '.join(piece))
                 piece = []
-    return '\r'.join(text_lines), names
+    return '\r'.join(text_lines), names, size / LAYOUT['title_size']
 
 
 def poster_slide(img, size=PSD_SIZE):
