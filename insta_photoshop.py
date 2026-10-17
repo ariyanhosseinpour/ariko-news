@@ -279,9 +279,11 @@ _JSX_PREPARE = r"""
   try{ if (title.textItem.kind==TextType.PARAGRAPHTEXT) title.textItem.kind=TextType.POINTTEXT; }catch(e){}
   setText(title, ARGS.title, ARGS.names, ARGS.hi_rgb);
   try{ title.textItem.justification=Justification.CENTER; }catch(e){}
-  scaleText(title, ARGS.title_scale);
-  var maxW=ARGS.title_max_w*px(doc.width), tw=px(title.bounds[2])-px(title.bounds[0]);
-  if (maxW>0 && tw>maxW) scaleText(title, maxW/tw);       // فونت فتوشاپ پهن‌تر بود → کمی کوچیک‌تر که از کادر نزنه
+  // تغییر اندازه با resize لایه (نه textItem.size که رنگ زرد اسم‌ها رو پاک می‌کنه)
+  var k=ARGS.title_scale||1;
+  var maxW=ARGS.title_max_w*px(doc.width), tw=(px(title.bounds[2])-px(title.bounds[0]))*k;
+  if (maxW>0 && tw>maxW) k*=maxW/tw;                       // فونت فتوشاپ پهن‌تر بود → کمی کوچیک‌تر که از کادر نزنه
+  if (Math.abs(k-1)>0.001) title.resize(k*100, k*100, AnchorPosition.BOTTOMCENTER);
   var dx=(ARGS.title_center ? px(doc.width)/2 : tcx)-(px(title.bounds[0])+px(title.bounds[2]))/2;
   if (Math.abs(dx)>0.5) title.translate(dx, 0);
   // تیتر کوتاه‌تر/بلندتر از نمونه‌ی قالب: پایین تیتر (و تگ بالاش) همون‌جای قالب می‌مونه؛ فونت و اندازه دست نمی‌خوره
