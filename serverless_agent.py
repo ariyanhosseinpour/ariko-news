@@ -977,6 +977,14 @@ def main():
             time.sleep(20)
 
     threading.Thread(target=background, daemon=True, name="background").start()
+
+    def anniversaries():                                         # سالگردهای انیمه، مثل بات قدیمی (هر روز ساعت ۱۰ تهران)
+        try:
+            old_bot().anniversary_loop()
+        except Exception as exc:
+            log(f"⚠️ سالگردها: {str(exc)[:150]}")
+
+    threading.Thread(target=anniversaries, daemon=True, name="anniversaries").start()
     import queue
     jobs_q, inflight = queue.Queue(), set()
 
