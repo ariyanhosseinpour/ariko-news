@@ -1,0 +1,39 @@
+name: groupbot-deploy
+# بات مدیریت گروه → Telegram Serverless. با هر تغییر توی groupbot/tgcloud خودکار نصب میشه.
+# Secrets لازم: GROUP_TGCLOUD_TOKEN (BotFather → بات → Serverless → CLI Access)
+# اختیاری: GROUP_OWNER_IDS (آیدی عددی مالک‌های دیگه، با کاما)، GROUP_UPSTASH_URL / GROUP_UPSTASH_TOKEN
+on:
+  push:
+    branches: [main]
+    paths: ["groupbot/tgcloud/**", ".github/workflows/groupbot-deploy.yml"]
+  workflow_dispatch:
+concurrency:
+  group: groupbot-deploy
+jobs:
+  push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: groupbot
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: deploy to Telegram Serverless
+        env:
+          TGCLOUD_TOKEN: ${{ secrets.GROUP_TGCLOUD_TOKEN }}
+          UPSTASH_URL: ${{ secrets.GROUP_UPSTASH_URL }}
+          UPSTASH_TOKEN: ${{ secrets.GROUP_UPSTASH_TOKEN }}
+          OWNER_IDS: ${{ secrets.GROUP_OWNER_IDS }}
+        run: |
+          if [ -z "$TGCLOUD_TOKEN" ]; then
+            echo "::warning::GROUP_TGCLOUD_TOKEN توی Secrets نیست؛ اول بات رو بساز و توکن CLI Access رو اضافه کن."
+            exit 0
+          fi
+          mkdir -p .tgcloud
+          node -e 'const e=process.env; require("fs").writeFileSync("tgcloud/lib/secrets.js", `export const UPSTASH_URL = ${JSON.stringify(e.UPSTASH_URL||"")};\nexport const UPSTASH_TOKEN = ${JSON.stringify(e.UPSTASH_TOKEN||"")};\nexport const OWNER_IDS = ${JSON.stringify(e.OWNER_IDS||"")};\n`)'
+          npx -y @tgcloud/cli@0.2.0 push tgcloud/schema.js tgcloud/handlers tgcloud/lib --force
+          # جدول دیتابیس (بار اول ساخته میشه؛ بعدش تغییری نداره)
+          npx -y @tgcloud/cli@0.2.0 migrate --yes
