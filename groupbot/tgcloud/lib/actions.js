@@ -70,7 +70,18 @@ export async function warn(p, chat, cfg, target, { reason = "", byLevel = L.admi
   const max = cfg.warn.max || 3;
   const vals = { name: mention(target), count: faNum(m.w), max: faNum(max), reason: spoiler(reason), group: esc(chat.title || "") };
   if (m.w < max) {
-    await send(p, chat.id, fill(cfg.warn.text, vals) + (auto ? "\n<i>(اخطار خودکار)</i>" : byUser ? `\nتوسط: ${mention(byUser)}` : ""));
+    let muted = "";
+    const each = cfg.warn.eachMins ?? 60;
+    if (each > 0 && m.w >= 2) {                           // از اخطار دوم به بعد = سکوت موقت (مثلاً ۱ ساعت)؛ اخطار اول فقط تذکره
+      const until = now() + each * 60e3;
+      try {
+        await mute(p, chat.id, target.id, until);
+        if (!m.mute || (m.mute.until && m.mute.until < until)) m.mute = { until, by: byLevel, at: now() };
+        await saveMember(p, chat.id, target.id, m);
+        muted = `\n🔇 تا ${fmtLeft(each * 60e3)} سکوت شد.`;
+      } catch (e) { /* ربات دسترسی محدود کردن نداره */ }
+    }
+    await send(p, chat.id, fill(cfg.warn.text, vals) + muted + (auto ? "\n<i>(اخطار خودکار)</i>" : byUser ? `\nتوسط: ${mention(byUser)}` : ""));
     return { count: m.w, punished: false };
   }
   const action = cfg.warn.action || "ban";

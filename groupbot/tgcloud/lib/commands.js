@@ -96,7 +96,7 @@ export const HELP = `📖 <b>راهنمای ربات مدیریت گروه</b>
 • پنل — panel (همه‌ی تنظیمات با دکمه)
 • قوانین — rules | تنظیم قوانین — setrules | قوانین زیر پست روشن/خاموش
 • خوشامد روشن/خاموش | تنظیم خوشامد … ({name} {group})
-• حد اخطار ۳ | مجازات اخطار بن/سکوت/اخراج [مدت] | متن اخطار … | متن مجازات …
+• حد اخطار ۳ | مجازات اخطار بن/سکوت/اخراج [مدت] | سکوت اخطار ۱ ساعت/خاموش | متن اخطار … | متن مجازات …
   ({name} {count} {max} {reason} {action})
 • فیلتر کلمه، کلمه — filter | حذف فیلتر — unfilter | فیلترها — filters
 • کلمه ممنوع … (پاک + اخطار فوری) — badword | حذف کلمه ممنوع | کلمات ممنوع
@@ -355,6 +355,18 @@ export const COMMANDS = {
     if (a === "mute") { const d = parseDuration(rest.join(" ")); if (d.until) c.cfg.warn.muteMins = Math.round((d.until - now()) / 60000); }
     await saveCfg(c.p, c.chat.id, c.cfg);
     return c.reply(`✅ مجازات رسیدن به حد اخطار: ${w}${a === "mute" ? ` (${fmtLeft(c.cfg.warn.muteMins * 60e3)})` : ""}.`);
+  } },
+  warnmute: { names: ["سکوت اخطار", "warnmute"], min: L.admin, async run(c) {
+    const a = norm(c.args);
+    if (OFF.test(a)) c.cfg.warn.eachMins = 0;
+    else {
+      const d = parseDuration(a);
+      if (!d.until) return c.reply(`سکوت از اخطار دوم به بعد: ${c.cfg.warn.eachMins ? fmtLeft(c.cfg.warn.eachMins * 60e3) : "❌ خاموش"}\n`
+        + "تنظیم: «سکوت اخطار ۱ ساعت» / «سکوت اخطار ۳۰ دقیقه» • خاموش: «سکوت اخطار خاموش»");
+      c.cfg.warn.eachMins = Math.max(1, Math.round((d.until - now()) / 60000));
+    }
+    await saveCfg(c.p, c.chat.id, c.cfg);
+    return c.reply(c.cfg.warn.eachMins ? `✅ از این به بعد از اخطار دوم به بعد، هر اخطار ${fmtLeft(c.cfg.warn.eachMins * 60e3)} سکوت داره (اخطار اول فقط تذکره).` : "✅ سکوت بعد از اخطار خاموش شد.");
   } },
   warntext: { names: ["متن اخطار", "warntext"], min: L.admin, run: (c) => setText(c, "warn.text", "متن اخطار", "{name} {count} {max} {reason}") },
   punishtext: { names: ["متن مجازات", "punishtext"], min: L.admin, run: (c) => setText(c, "warn.punish", "متن مجازات", "{name} {max} {action} {reason}") },

@@ -26,6 +26,7 @@ export function panelView(cfg, chatId, page = "main") {
       [{ text: "➖", callback_data: cb("wm", "-1") }, { text: `حد اخطار: ${faNum(cfg.warn.max)}`, callback_data: cb("noop") },
        { text: "➕", callback_data: cb("wm", "1") }],
       [{ text: `مجازات اخطار: ${ACTION_FA[cfg.warn.action] || "بن"} 🔄`, callback_data: cb("wa") }],
+      [{ text: `🔇 سکوت از اخطار دوم: ${cfg.warn.eachMins ? fmtLeft(cfg.warn.eachMins * 60e3) : "خاموش"} 🔄`, callback_data: cb("we") }],
       [{ text: "⬅️ برگشت", callback_data: cb("pg", "main") }],
     ] } };
   }
@@ -74,6 +75,12 @@ export async function panelAction(p, cfg, chatId, op, arg, level) {
   }
   if (op === "wm") {
     cfg.warn.max = Math.min(20, Math.max(1, (cfg.warn.max || 3) + Number(arg)));
+    await saveCfg(p, chatId, cfg);
+    return { page: "settings" };
+  }
+  if (op === "we") {
+    const steps = [0, 30, 60, 180, 360, 1440];
+    cfg.warn.eachMins = steps[(steps.indexOf(cfg.warn.eachMins ?? 60) + 1) % steps.length];
     await saveCfg(p, chatId, cfg);
     return { page: "settings" };
   }

@@ -64,7 +64,7 @@ export const DEFAULT_CFG = {
   allow: {},                             // {link: [آیدی‌هایی که با وجود قفل مجازن]}
   rules: "", rulesOnPost: true,
   welcome: { on: true, text: "سلام {name} 👋\nبه {group} خوش اومدی!\nقبل از هر چیز قوانین رو بخون: /rules", last: 0 },
-  warn: { max: 3, action: "ban", muteMins: 1440,
+  warn: { max: 3, action: "ban", muteMins: 1440, eachMins: 60,   // eachMins: سکوت از اخطار دوم به بعد (۰ = خاموش)
           text: "⚠️ {name} یه اخطار گرفت ({count} از {max})\nدلیل: {reason}",
           punish: "⛔️ {name} به {max} اخطار رسید و {action} شد.\nدلیل آخر: {reason}" },
   filters: [], bad: [], replies: [],
