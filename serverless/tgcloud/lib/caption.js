@@ -23,6 +23,11 @@ VOICE (very important):
   Do NOT repeat the headline, and do NOT write the release date or the studio in details — the bot adds
   «تاریخ پخش» and «استودیو سازنده» lines itself, so repeating them looks bad.
 - Do not write dates in the text (the bot adds a date line). Do not explain obvious things.
+- When the news IS a reveal (studio, director, cast, theme singer, episode count…), the headline MUST say WHAT was revealed,
+  never just «مشخص شد» / «معرفی شد». GOOD: «استودیو سازنده‌ی دنباله‌ی «X» مشخص شد؛ استودیو Pierrot ساختش رو به عهده داره.»
+  or «استودیو Pierrot دنباله‌ی «X» رو می‌سازه.» BAD: «استودیو سازنده‌ی دنباله‌ی «X» مشخص شد.» (fans' first question: which studio?)
+  If the studio is revealed, also put its name in "studio". If SOURCE does not contain the revealed name at all, write
+  the headline about what SOURCE does say instead of claiming something was revealed.
 - If CERTAINTY is a leak/rumor, make it clear the info is UNOFFICIAL (not a guess): start the headline with
   «طبق گزارشات غیررسمی؛» or «طبق اطلاعات لو رفته؛». Do NOT use «احتمالاً» for this — it sounds like we are guessing.
 - Trailer/teaser/poster order: never write «تریلر اول» or «اولین تریلر» — for the first one just say «تریلر».
@@ -134,6 +139,14 @@ export function validate(data, item, meta) {
   if (!norm(headline).includes(nt)) return [null, "اسم انیمه توی تیتر نیست"];
   const problem = checkText(headline, hay, numbers);
   if (problem) return [null, problem];
+  let studio = String(data.studio || "").replace(/\s+/g, " ").trim();
+  if (studio && !hay.includes(norm(studio))) studio = "";
+  // «استودیو سازنده مشخص شد» بدون گفتن اسم استودیو = خبر بی‌خاصیت
+  if (/استودیو/.test(headline) && /(مشخص|معرفی|اعلام|فاش|تایید|تأیید|لو)/.test(headline)) {
+    const latin = (headline.replace(/«[^»]*»/g, " ").match(/[A-Za-z][A-Za-z0-9.&'\- ]{1,}/g) || []).map(norm).filter((w) => w.length > 1);
+    const named = (studio && norm(headline).includes(norm(studio))) || latin.some((w) => hay.includes(w));
+    if (!named) return [null, "the headline says the studio was revealed but does not name the studio — name it (from SOURCE) in the headline and in \"studio\""];
+  }
   const details = [];
   for (let d of [].concat(data.details || []).slice(0, 2)) {
     d = cleanFa(d);
@@ -148,8 +161,6 @@ export function validate(data, item, meta) {
     const low = sourceText.toLowerCase();
     if ((yrs.length && !yrs.every((y) => sourceText.includes(y))) || (words.length && !words.some((w) => low.includes(w)))) release = "";
   }
-  let studio = String(data.studio || "").replace(/\s+/g, " ").trim();
-  if (studio && !hay.includes(norm(studio))) studio = "";
   let emoji = String(data.emoji || "").trim();
   if (!emoji || emoji.length > 4 || /[A-Za-z0-9؀-ۿ]/.test(emoji)) emoji = "🔥";
   const extra = {};
@@ -318,6 +329,14 @@ export function validateFact(data, item) {
   if (headline.length < 20 || headline.length > 400 || faLetters(headline) < 12) return [null, "تیتر فکت مناسب نیست"];
   const problem = checkText(headline, hay, numbers);
   if (problem) return [null, problem];
+  let studio = String(data.studio || "").replace(/\s+/g, " ").trim();
+  if (studio && !hay.includes(norm(studio))) studio = "";
+  // «استودیو سازنده مشخص شد» بدون گفتن اسم استودیو = خبر بی‌خاصیت
+  if (/استودیو/.test(headline) && /(مشخص|معرفی|اعلام|فاش|تایید|تأیید|لو)/.test(headline)) {
+    const latin = (headline.replace(/«[^»]*»/g, " ").match(/[A-Za-z][A-Za-z0-9.&'\- ]{1,}/g) || []).map(norm).filter((w) => w.length > 1);
+    const named = (studio && norm(headline).includes(norm(studio))) || latin.some((w) => hay.includes(w));
+    if (!named) return [null, "the headline says the studio was revealed but does not name the studio — name it (from SOURCE) in the headline and in \"studio\""];
+  }
   const reaction = cleanFa(data.reaction);
   const details = [];
   for (let d of [].concat(data.details || []).slice(0, 2)) {

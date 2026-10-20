@@ -10269,6 +10269,9 @@ VOICE (very important):
   Do NOT repeat the headline, and do NOT write the release date or the studio in details — the bot adds
   «تاریخ پخش» and «استودیو سازنده» lines itself, so repeating them looks bad.
 - Do not write dates in the text (the bot adds a date line). Do not explain obvious things.
+- When the news IS a reveal (studio, director, cast, theme singer, episode count…), the headline MUST say WHAT was revealed,
+  never just «مشخص شد» / «معرفی شد». GOOD: «استودیو سازنده‌ی دنباله‌ی «X» مشخص شد؛ استودیو Pierrot ساختش رو به عهده داره.»
+  BAD: «استودیو سازنده‌ی دنباله‌ی «X» مشخص شد.» If the studio is revealed, also put its name in "studio".
 - If CERTAINTY is a leak/rumor, make it clear the info is UNOFFICIAL (not a guess): start the headline with
   «طبق گزارشات غیررسمی؛» or «طبق اطلاعات لو رفته؛». Do NOT use «احتمالاً» for this — it sounds like we are guessing.
 - Never write «کور» / «cour» — most fans don't know it. Say «پارت» (e.g. «۲۴ قسمت در دو پارت پشت‌سرهم»،
