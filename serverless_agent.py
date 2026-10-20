@@ -793,6 +793,44 @@ def run_job(job):
         return
 
 
+def anniversary_tick():
+    """سالگردهای روز (مثل anniversary_loop بات قدیمی)، ولی روز فقط وقتی «فرستاده‌شده» ثبت میشه که پیام واقعاً
+    رسیده باشه؛ اگه تلگرام/اینترنت قطع بود، ۱۰ دقیقه بعد دوباره امتحان میشه و خطاش توی همین پنجره نوشته میشه."""
+    from datetime import datetime, timedelta
+    mod = old_bot()
+    if mod.get_setting("anniv_enabled", "1") != "1":
+        return
+    now = datetime.now(mod.ANNIV_TZ)
+    today = now.date().isoformat()
+    if now.hour < mod._anniv_setting_int("anniv_hour", 10) or mod.get_setting("anniv_agent_sent", "") == today:
+        return
+    mod.bot.get_me()                                             # تلگرام در دسترس نیست → خطا و تلاش بعدی
+    lead = max(0, min(7, mod._anniv_setting_int("anniv_lead", 1)))
+    target = now.date() + timedelta(days=lead)
+    label = {0: "امروز ", 1: "فردا "}.get(lead, f"{mod._news_fa_digits(str(lead))} روز دیگه ")
+    sent = {"n": 0}
+    orig = {k: getattr(mod.bot, k) for k in ("send_message", "send_photo")}
+
+    def counting(fn):
+        def wrapper(*a, **kw):
+            r = fn(*a, **kw)
+            sent["n"] += 1
+            return r
+        return wrapper
+    for k, fn in orig.items():
+        setattr(mod.bot, k, counting(fn))
+    try:
+        mod._anniv_send(mod.ADMINS, target, label)
+    finally:
+        for k, fn in orig.items():
+            setattr(mod.bot, k, fn)
+    if not sent["n"]:
+        raise RuntimeError("هیچ پیام سالگردی به تلگرام نرسید")
+    mod.set_setting("anniv_agent_sent", today)
+    mod.set_setting("anniv_last_sent", today)
+    log(f"🎂 سالگردهای {label.strip()} ({target.isoformat()}) فرستاده شد ({sent['n']} پیام)")
+
+
 def relay(updates):
     """دکمه‌ها/پیام‌هایی که سرور برای منوی قدیمی فرستاده → همون handlerهای بات قدیمی."""
     mod = old_bot()
@@ -979,10 +1017,12 @@ def main():
     threading.Thread(target=background, daemon=True, name="background").start()
 
     def anniversaries():                                         # سالگردهای انیمه، مثل بات قدیمی (هر روز ساعت ۱۰ تهران)
-        try:
-            old_bot().anniversary_loop()
-        except Exception as exc:
-            log(f"⚠️ سالگردها: {str(exc)[:150]}")
+        while True:
+            try:
+                anniversary_tick()
+            except Exception as exc:
+                log(f"⚠️ سالگردها: {str(exc)[:150]} (۱۰ دقیقه‌ی دیگه دوباره)")
+            time.sleep(10 * 60)
 
     threading.Thread(target=anniversaries, daemon=True, name="anniversaries").start()
     import queue
