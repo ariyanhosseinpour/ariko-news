@@ -6,6 +6,7 @@ import { parseTarget, parseDuration, parseLock } from "./parse.js";
 import { punish, lift, warn, del, spoiler } from "./actions.js";
 import { lockLine, glockText } from "./guard.js";
 import { panelView } from "./panel.js";
+import { statsText } from "./stats.js";
 
 const ON = /^(روشن|فعال|on|enable|yes|بله)$/i, OFF = /^(خاموش|غیرفعال|غیر فعال|off|disable|no|خیر)$/i;
 const ACTION = { "بن": "ban", "ban": "ban", "سکوت": "mute", "mute": "mute", "اخراج": "kick", "kick": "kick" };
@@ -50,23 +51,7 @@ async function toggle(c, path, label) {
   return c.reply(`${label} ${c.cfg[a][b] ? "✅ روشن" : "❌ خاموش"} شد.`);
 }
 
-function stats(c) {
-  return (async () => {
-    const days = [];
-    for (let i = 0; i < 7; i++) days.push(dayKey(now() - i * 86400e3));
-    const rows = await Promise.all(days.map((d) => c.p.kv.get(`d:${c.chat.id}:${d}`)));
-    const today = rows[0] || { t: 0, u: {}, j: 0, l: 0 };
-    const top = Object.entries(today.u || {}).sort((a, b) => b[1][0] - a[1][0]).slice(0, 10);
-    let count = "";
-    try { count = faNum(await c.p.api("getChatMemberCount", { chat_id: c.chat.id })); } catch (e) { /* */ }
-    const week = rows.reduce((s, r) => s + ((r && r.t) || 0), 0);
-    return c.reply(`📊 <b>آمار ${esc(c.chat.title || "گروه")}</b>\n`
-      + (count ? `👥 اعضا: ${count}\n` : "")
-      + `💬 پیام‌های امروز: ${faNum(today.t || 0)}\n📅 پیام‌های ۷ روز اخیر: ${faNum(week)}\n`
-      + `➕ ورود امروز: ${faNum(today.j || 0)} • ➖ خروج: ${faNum(today.l || 0)}\n`
-      + (top.length ? `\n🏆 <b>فعال‌ترین‌های امروز</b>\n` + top.map(([id, [n, name]], i) => `${faNum(i + 1)}. ${mentionId(id, name)} — ${faNum(n)} پیام`).join("\n") : ""));
-  })();
-}
+const stats = async (c) => c.reply(await statsText(c.p, c.chat.id, c.chat.title));
 
 export const HELP = `📖 <b>راهنمای ربات مدیریت گروه</b>
 همه‌ی دستورها فارسی و انگلیسی‌ان، با یا بدون «/». کاربر رو با <b>ریپلای</b>، <b>منشن</b>، <b>@یوزرنیم</b> یا <b>آیدی عددی</b> مشخص کن.
@@ -493,7 +478,7 @@ export const COMMANDS = {
       + `\n\nدستورهای تو: قوانین • گزارش (ریپلای) • اطلاعات • آیدی • راهنما`);
   } },
   panel: { names: ["پنل", "پنل مدیریت", "تنظیمات", "panel", "settings"], min: L.admin, async run(c) {
-    const v = panelView(c.cfg, c.chat.id, "main");
+    const v = await panelView(c.cfg, c.chat.id, "main", { p: c.p, level: c.level, deputy: c.deputy });
     return c.reply(v.text, { reply_markup: v.kb });
   } },
   help: { names: ["راهنما", "دستورات", "help", "commands"], min: L.member, run: (c) => c.reply(HELP) },

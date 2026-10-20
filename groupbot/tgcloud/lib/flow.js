@@ -1,8 +1,9 @@
 // مسیر هر پیام گروه: فعال بودن، نقش فرستنده، دستورها، ورود اعضا، قوانین زیر پست کانال، نگهبان و آمار.
-import { L, OWNERS, esc, mention, nameOf, now, dayKey, fill, getCfg, saveCfg, getMember, saveMember, getDeputy, levelOf,
-         rememberUser } from "./core.js";
+import { L, OWNERS, esc, mention, nameOf, norm, now, dayKey, fill, getCfg, saveCfg, getMember, saveMember, getDeputy, levelOf,
+         rememberUser, userByName } from "./core.js";
 import { parseCommand } from "./parse.js";
 import { COMMANDS, HELP } from "./commands.js";
+import { panelView } from "./panel.js";
 import { guard, autoReply } from "./guard.js";
 import { del, kick } from "./actions.js";
 
@@ -122,23 +123,119 @@ export async function editedMessage(p, msg) {
   await guard(p, msg, cfg, level, {}, { edited: true });   // لینک/کلمه‌ای که بعداً با ویرایش اضافه شده
 }
 
+/** گروه‌هایی که این شخص توشون ادمین یا بالاتره (مالک و جانشین: همه‌ی گروه‌های فعال) */
+export async function myGroups(p, uid, deputy) {
+  const groups = await p.kv.list("grp:");
+  const out = [];
+  for (const g of groups) {
+    const id = Number(g.key.slice(4));
+    const cfg = await getCfg(p, id);
+    if (!cfg.active) continue;
+    if (await levelOf(p, id, cfg, uid, deputy) >= L.admin) out.push({ id, title: cfg.title || g.value.t || String(id) });
+  }
+  return out;
+}
+
+export async function groupsMenu(p, uid, deputy) {
+  const gs = await myGroups(p, uid, deputy);
+  const boss = OWNERS.includes(uid) || (deputy && deputy.id === uid);
+  const text = gs.length
+    ? `🛠 <b>مدیریت گروه‌ها</b>
+گروهی که می‌خوای تنظیم کنی رو انتخاب کن (${faNumLocal(gs.length)} گروه):`
+    : boss ? "هنوز گروه فعالی نیست. ربات رو به گروه اضافه و ادمین کن (خودکار فعال میشه) یا توی گروه بنویس «فعال»."
+      : "👋 سلام! من ربات مدیریت گروه‌های آریکوام.\nتوی گروه «پنل من» رو بزن تا وضعیتت رو ببینی، یا «راهنما» برای دستورها.";
+  return { text, kb: gs.length ? { inline_keyboard: gs.map((g) => [{ text: `👥 ${g.title}`, callback_data: `gs:${g.id}` }]) } : undefined };
+}
+const faNumLocal = (n) => String(n).replace(/\d/g, (d) => "۰۱۲۳۴۵۶۷۸۹"[d]);
+
+/** کاربر از روی پیام خصوصی: فوروارد، @یوزرنیم یا آیدی عددی */
+async function userFromPrivate(p, msg) {
+  const fo = msg.forward_origin;
+  if (fo && fo.type === "user" && fo.sender_user) return fo.sender_user;
+  if (msg.forward_from) return msg.forward_from;
+  const t = norm(msg.text || "");
+  const un = (msg.text || "").match(/@([A-Za-z0-9_]{4,32})/);
+  if (un) { const k = await userByName(p, un[1]); return k ? { id: k.id, first_name: k.n } : null; }
+  const id = t.match(/\d{5,15}/);
+  return id ? { id: Number(id[0]), first_name: id[0] } : null;
+}
+
+/** متنی که بعد از زدن یه دکمه‌ی «✏️ …» توی خصوصی فرستاده شد */
+async function applyEdit(p, msg, w, level) {
+  const cfg = await getCfg(p, w.chat);
+  const text = (msg.text || msg.caption || "").trim();
+  const words = text.split(/[،,\n]+/).map((x) => x.trim()).filter(Boolean);
+  const ok = async (m, page) => { await saveCfg(p, w.chat, cfg); return { msg: m, page }; };
+  switch (w.field) {
+    case "rules": if (!text) break; cfg.rules = text; return ok("✅ قوانین ذخیره شد.", "texts");
+    case "welcome": if (!text) break; cfg.welcome.text = text; return ok("✅ متن خوشامد ذخیره شد.", "texts");
+    case "warntext": if (!text) break; cfg.warn.text = text; return ok("✅ متن اخطار ذخیره شد.", "texts");
+    case "punishtext": if (!text) break; cfg.warn.punish = text; return ok("✅ متن مجازات ذخیره شد.", "texts");
+    case "filter_add": cfg.filters = [...new Set([...cfg.filters, ...words])]; return ok(`✅ فیلتر شد: ${words.map(esc).join("، ")}`, "words");
+    case "filter_del": cfg.filters = cfg.filters.filter((x) => !words.map(norm).includes(norm(x))); return ok("✅ از فیلتر برداشته شد.", "words");
+    case "bad_add": cfg.bad = [...new Set([...cfg.bad, ...words])]; return ok(`✅ ممنوع شد: ${words.map(esc).join("، ")}`, "words");
+    case "bad_del": cfg.bad = cfg.bad.filter((x) => !words.map(norm).includes(norm(x))); return ok("✅ از ممنوع‌ها برداشته شد.", "words");
+    case "reply_add": {
+      const m = text.split(/\s*[=|]\s*/);
+      if (m.length < 2 || !m[0] || !m[1]) return { msg: "❌ این‌طوری بفرست: <code>سلام = سلام {name}</code>", keep: true };
+      const exact = m[0].startsWith("!"), t = m[0].replace(/^!/, "").trim();
+      cfg.replies = [...cfg.replies.filter((r) => norm(r.t) !== norm(t)), { t, r: m.slice(1).join(" = ").trim(), exact }];
+      return ok(`✅ پاسخ خودکار «${esc(t)}» ثبت شد.`, "words");
+    }
+    case "reply_del": cfg.replies = cfg.replies.filter((r) => norm(r.t) !== norm(text.replace(/^!/, ""))); return ok("✅ پاسخ خودکار برداشته شد.", "words");
+    case "force_add": {
+      const ch = text.match(/@([A-Za-z0-9_]{4,})|(-100\d{5,})/);
+      if (!ch) return { msg: "❌ یوزرنیم کانال رو بفرست (مثلاً @arikotv).", keep: true };
+      const id = ch[1] ? "@" + ch[1] : ch[2];
+      try { await p.api("getChat", { chat_id: id }); } catch (e) { return { msg: "❌ این کانال پیدا نشد؛ ربات رو ادمین کانال کن و دوباره بفرست.", keep: true }; }
+      cfg.force.chans = [...new Set([...cfg.force.chans, id])]; cfg.force.on = true;
+      return ok(`✅ ${esc(id)} به عضویت اجباری اضافه شد و روشنه.`, "force");
+    }
+    case "flood": {
+      const n = norm(text).match(/(\d+)\D+(\d+)/);
+      if (!n) return { msg: "❌ دو تا عدد بفرست، مثلاً <code>7 6</code>.", keep: true };
+      cfg.flood.n = Math.max(3, Number(n[1])); cfg.flood.sec = Math.max(2, Number(n[2])); cfg.flood.on = true;
+      return ok(`✅ ضد اسپم: بیشتر از ${faNumLocal(cfg.flood.n)} پیام توی ${faNumLocal(cfg.flood.sec)} ثانیه.`, "settings");
+    }
+    case "admin_add": case "special_add": case "deputy": {
+      const u = await userFromPrivate(p, msg);
+      if (!u) return { msg: "❌ این شخص رو نمی‌شناسم. یه پیامش رو فوروارد کن یا آیدی عددیش رو بفرست.", keep: true };
+      const tl = await levelOf(p, w.chat, cfg, u.id);
+      if (tl >= level) return { msg: "⛔️ این شخص هم‌سطح یا بالاتر از توئه.", keep: true };
+      if (w.field === "deputy") { await p.kv.set("deputy", { id: u.id, n: nameOf(u) }); return { msg: `🎖 ${mention(u)} جانشین مالک شد.`, page: "roles" }; }
+      if (w.field === "admin_add") { cfg.admins[u.id] = { n: nameOf(u), by: level, at: now() }; delete cfg.special[u.id]; }
+      else cfg.special[u.id] = { n: nameOf(u), by: level, at: now() };
+      return ok(`✅ ${mention(u)} ${w.field === "admin_add" ? "ادمین ربات" : "کاربر ویژه"} شد.`, "roles");
+    }
+  }
+  return { msg: "❌ متن خالیه؛ دوباره بفرست.", keep: true };
+}
+
 export async function privateMessage(p, msg) {
   const u = msg.from;
   if (!u) return;
   await rememberUser(p, u);
   const deputy = await getDeputy(p);
-  const boss = OWNERS.includes(u.id) || (deputy && deputy.id === u.id);
   const t = (msg.text || "").trim();
   const send = (text, extra = {}) => p.api("sendMessage", { chat_id: u.id, text, parse_mode: "HTML", disable_web_page_preview: true, ...extra });
-  if (/^\/?(help|راهنما|دستورات)/i.test(t)) return send(HELP);
-  if (boss) {
-    const groups = await p.kv.list("grp:");
-    return send(`👋 سلام ${mention(u)}، ${OWNERS.includes(u.id) ? "مالک" : "جانشین مالک"} عزیز.\n\n`
-      + `📋 گروه‌های فعال (${groups.length}):\n${groups.map((g) => `• ${esc(g.value.t)} <code>${g.key.slice(4)}</code>`).join("\n") || "—"}\n\n`
-      + "برای فعال کردن یه گروه: ربات رو به گروه اضافه و ادمین کن و توی گروه بنویس «فعال».\n"
-      + "گزارش‌های کاربرها اینجا برات میاد. «راهنما» = همه‌ی دستورها.");
+  const w = await p.kv.get("wait:" + u.id);
+  if (/^\/?(cancel|لغو)$/i.test(t)) { await p.kv.del("wait:" + u.id); return send("لغو شد."); }
+  if (w && !/^\/(start|help|panel)/i.test(t)) {
+    const cfg = await getCfg(p, w.chat);
+    const level = await levelOf(p, w.chat, cfg, u.id, deputy);
+    if (level < L.admin) { await p.kv.del("wait:" + u.id); return send("⛔️ دیگه ادمین این گروه نیستی."); }
+    const r = await applyEdit(p, msg, w, level);
+    if (!r.keep) await p.kv.del("wait:" + u.id);
+    await send(r.msg);
+    if (r.page) {
+      const v = await panelView(await getCfg(p, w.chat), w.chat, r.page, { priv: true, p, level, deputy: await getDeputy(p) });
+      await send(v.text, { reply_markup: v.kb });
+    }
+    return;
   }
-  return send("👋 سلام! من ربات مدیریت گروه‌های آریکوام.\nتوی گروه «پنل من» رو بزن تا وضعیتت رو ببینی، یا «راهنما» برای دستورها.");
+  if (/^\/?(help|راهنما|دستورات)/i.test(t)) return send(HELP);
+  const m = await groupsMenu(p, u.id, deputy);
+  return send(m.text, m.kb ? { reply_markup: m.kb } : {});
 }
 
 export async function botAdded(p, upd) {
