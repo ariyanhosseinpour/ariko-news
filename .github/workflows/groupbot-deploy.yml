@@ -34,6 +34,11 @@ jobs:
           fi
           mkdir -p .tgcloud
           node -e 'const e=process.env; require("fs").writeFileSync("tgcloud/lib/secrets.js", `export const UPSTASH_URL = ${JSON.stringify(e.UPSTASH_URL||"")};\nexport const UPSTASH_TOKEN = ${JSON.stringify(e.UPSTASH_TOKEN||"")};\nexport const OWNER_IDS = ${JSON.stringify(e.OWNER_IDS||"")};\n`)'
-          npx -y @tgcloud/cli@0.2.0 push tgcloud/schema.js tgcloud/handlers tgcloud/lib --force
+          # CLI نسخه‌ی 0.2.0 روی پروژه‌ی تازه، بعد از آپلود موقع نوشتن کپی محلی (snapshot) با محتوای false کرش می‌کنه؛
+          # آپلود انجام شده ولی مرحله‌ی بعد اجرا نمیشد → فقط رشته‌ها نوشته بشن
+          npm install --no-save --silent @tgcloud/cli@0.2.0
+          sed -i "s/fs.writeFileSync(full, content);/if (typeof content === 'string') fs.writeFileSync(full, content);/" node_modules/@tgcloud/cli/src/core/snapshot.js
+          npx tgcloud push tgcloud/schema.js tgcloud/handlers tgcloud/lib --force
           # جدول دیتابیس (بار اول ساخته میشه؛ بعدش تغییری نداره)
-          npx -y @tgcloud/cli@0.2.0 migrate --yes
+          npx tgcloud migrate --yes
+          npx tgcloud webhook || true
