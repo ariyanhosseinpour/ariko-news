@@ -794,41 +794,50 @@ def run_job(job):
 
 
 def anniversary_tick():
-    """سالگردهای روز (مثل anniversary_loop بات قدیمی)، ولی روز فقط وقتی «فرستاده‌شده» ثبت میشه که پیام واقعاً
-    رسیده باشه؛ اگه تلگرام/اینترنت قطع بود، ۱۰ دقیقه بعد دوباره امتحان میشه و خطاش توی همین پنجره نوشته میشه."""
-    from datetime import datetime, timedelta
+    """سالگردهای روز (مثل anniversary_loop بات قدیمی)، ولی هر روز فقط وقتی «فرستاده‌شده» ثبت میشه که پیام واقعاً
+    رسیده باشه. اگه AniList یا تلگرام قطع بود، ۱۰ دقیقه بعد دوباره؛ روزهایی که جا موندن (تا ۳ روز) بعد از وصل شدن
+    فرستاده میشن، که سالگردی مثل وان‌پیس گم نشه."""
+    from datetime import datetime, timedelta, date
     mod = old_bot()
     if mod.get_setting("anniv_enabled", "1") != "1":
         return
     now = datetime.now(mod.ANNIV_TZ)
-    today = now.date().isoformat()
-    if now.hour < mod._anniv_setting_int("anniv_hour", 10) or mod.get_setting("anniv_agent_sent", "") == today:
+    lead = max(0, min(7, mod._anniv_setting_int("anniv_lead", 1)))
+    due = now.date() + timedelta(days=lead if now.hour >= mod._anniv_setting_int("anniv_hour", 10) else lead - 1)
+    try:
+        last = date.fromisoformat(mod.get_setting("anniv_agent_target", ""))
+    except ValueError:                                           # بار اول: از دیروز به بعد (که امروزِ جامونده هم بیاد)
+        last = now.date() - timedelta(days=2)
+    target = max(last + timedelta(days=1), due - timedelta(days=3))
+    if target > due:
         return
     mod.bot.get_me()                                             # تلگرام در دسترس نیست → خطا و تلاش بعدی
-    lead = max(0, min(7, mod._anniv_setting_int("anniv_lead", 1)))
-    target = now.date() + timedelta(days=lead)
-    label = {0: "امروز ", 1: "فردا "}.get(lead, f"{mod._news_fa_digits(str(lead))} روز دیگه ")
-    sent = {"n": 0}
-    orig = {k: getattr(mod.bot, k) for k in ("send_message", "send_photo")}
+    while target <= due:
+        diff = (target - now.date()).days
+        label = {0: "امروز ", 1: "فردا ", -1: "دیروز "}.get(diff) or (
+            f"{mod._news_fa_digits(str(diff))} روز دیگه " if diff > 0 else f"{mod._news_fa_digits(str(-diff))} روز پیش ")
+        sent = {"n": 0}
+        orig = {k: getattr(mod.bot, k) for k in ("send_message", "send_photo")}
 
-    def counting(fn):
-        def wrapper(*a, **kw):
-            r = fn(*a, **kw)
-            sent["n"] += 1
-            return r
-        return wrapper
-    for k, fn in orig.items():
-        setattr(mod.bot, k, counting(fn))
-    try:
-        mod._anniv_send(mod.ADMINS, target, label)
-    finally:
+        def counting(fn):
+            def wrapper(*a, **kw):
+                r = fn(*a, **kw)
+                sent["n"] += 1
+                return r
+            return wrapper
         for k, fn in orig.items():
-            setattr(mod.bot, k, fn)
-    if not sent["n"]:
-        raise RuntimeError("هیچ پیام سالگردی به تلگرام نرسید")
-    mod.set_setting("anniv_agent_sent", today)
-    mod.set_setting("anniv_last_sent", today)
-    log(f"🎂 سالگردهای {label.strip()} ({target.isoformat()}) فرستاده شد ({sent['n']} پیام)")
+            setattr(mod.bot, k, counting(fn))
+        try:
+            mod._anniv_send(mod.ADMINS, target, label)          # AniList قطع باشه، قبل از فرستادن هر پیامی خطا میده
+        finally:
+            for k, fn in orig.items():
+                setattr(mod.bot, k, fn)
+        if not sent["n"]:
+            raise RuntimeError("هیچ پیام سالگردی به تلگرام نرسید")
+        mod.set_setting("anniv_agent_target", target.isoformat())
+        mod.set_setting("anniv_last_sent", now.date().isoformat())
+        log(f"🎂 سالگردهای {label.strip()} ({target.isoformat()}) فرستاده شد ({sent['n']} پیام)")
+        target += timedelta(days=1)
 
 
 def relay(updates):

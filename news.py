@@ -15317,7 +15317,7 @@ def news_bot_chat_id(message):
 ANNIV_TZ = timezone(timedelta(hours=3, minutes=30))          # تهران (بدون ساعت تابستونی)
 ANNIV_FORMATS = ("TV", "MOVIE", "ONA")
 ANNIV_MILESTONES = (1, 5, 10, 15, 20, 25, 30, 35, 40, 50)
-ANNIV_MAX_ITEMS = 12
+ANNIV_MAX_ITEMS = 40                                         # عملاً همه (یه روز معمولاً کمتر از این سالگرد داره)
 ANNIV_KIND_FA = {
     "first": "سالگرد اولین پخش انیمه",
     "season_start": "سالگرد شروع پخش این فصل",
@@ -15414,8 +15414,8 @@ def _anniv_list(target: date) -> list:
             try:
                 medias = _anniv_anilist(field, mmdd, min(pop_all, pop_known))
             except Exception as exc:
-                logger.info("Anniversary AniList query failed (%s %s): %s", field, mmdd, exc)
-                continue
+                # AniList قطعه (مثلاً تعمیرات): لیست ناقص نفرستیم که سالگردی مثل وان‌پیس جا بیفته؛ بعداً دوباره
+                raise RuntimeError(f"AniList جواب نداد ({str(exc)[:120]})") from exc
             for m in medias:
                 is_start = field.startswith("start")
                 when = _anniv_date(m.get("startDate" if is_start else "endDate") or {})
